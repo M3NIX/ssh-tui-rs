@@ -10,6 +10,8 @@ use ratatui::{
 
 use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow};
 
+const TWO_TAB_GAP: &str = "        ";
+
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let root = frame.area();
     let layout = Layout::default()
@@ -532,18 +534,16 @@ fn folder_host_item(
         ));
     }
 
-    let mut lines = vec![Line::from(spans)];
     if let Some(description) = &host.description {
-        let mut description_spans = vec![Span::raw("  ")];
-        description_spans.extend(fuzzy_highlighted(
+        spans.push(Span::raw(TWO_TAB_GAP));
+        spans.extend(fuzzy_highlighted(
             description,
             query,
             Style::default().fg(Color::DarkGray),
         ));
-        lines.push(Line::from(description_spans));
     }
 
-    ListItem::new(lines)
+    ListItem::new(Line::from(spans))
 }
 
 fn host_dot(reachability: HostReachability) -> Span<'static> {
@@ -818,6 +818,15 @@ mod tests {
         assert!(rendered.contains("zeta-db"));
         assert!(rendered.contains("Primary database"));
         assert!(rendered.find("alpha-api") < rendered.find("zeta-db"));
+        let zeta_row = terminal
+            .backend()
+            .buffer()
+            .content
+            .chunks(100)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .find(|row| row.contains("zeta-db"))
+            .expect("zeta-db row");
+        assert!(zeta_row.contains("Primary database"));
 
         app.search = "primary".into();
         app.rebuild_visible();
