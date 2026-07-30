@@ -48,7 +48,7 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
     };
     let search = Line::from(vec![
         Span::styled(
-            "🔍",
+            ">",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -720,7 +720,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(header.contains("Search"));
-        assert!(header.contains("🔍"));
+        assert!(header.contains("> /"));
         assert!(header.contains('/'));
         assert!(!header.contains("Connections"));
         assert!(!header.contains("Search:"));
