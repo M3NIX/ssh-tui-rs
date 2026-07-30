@@ -60,7 +60,9 @@ pub struct App {
     pub visible: Vec<VisibleRow>,
     pub search: String,
     pub input_mode: InputMode,
+    pub tree_left: u16,
     pub tree_top: u16,
+    pub tree_width: u16,
     pub tree_height: u16,
     pub visible_offset: usize,
     pub status: String,
@@ -86,7 +88,9 @@ impl App {
             visible: Vec::new(),
             search: String::new(),
             input_mode: InputMode::Normal,
+            tree_left: 0,
             tree_top: 0,
+            tree_width: 0,
             tree_height: 0,
             visible_offset: 0,
             status: String::new(),
@@ -96,7 +100,10 @@ impl App {
             reachability_updates: Vec::new(),
         };
         app.rebuild_visible();
-        app.status = format!("{} hosts loaded", app.config.hosts.len());
+        app.status = match app.config.hosts.len() {
+            1 => "1 host".to_string(),
+            count => format!("{count} hosts"),
+        };
         let ungrouped_hosts = app.nodes[app.root_id]
             .children
             .iter()
@@ -116,8 +123,36 @@ impl App {
         self.input_mode = InputMode::Search;
     }
 
-    pub fn finish_search(&mut self) {
+    pub fn reveal_search_selection(&mut self) {
+        let Some(node_id) = self.selected_node_id() else {
+            self.clear_search();
+            return;
+        };
+
+        let mut current = match self.nodes[node_id].kind {
+            NodeKind::Root => None,
+            NodeKind::Folder => Some(node_id),
+            NodeKind::Host(_) => self.nodes[node_id].parent,
+        };
+        let mut highest_newly_expanded = None;
+        while let Some(folder_id) = current {
+            if folder_id == self.root_id {
+                break;
+            }
+            if self.expanded.insert(folder_id) {
+                highest_newly_expanded = Some(folder_id);
+            }
+            current = self.nodes[folder_id].parent;
+        }
+
+        self.search.clear();
         self.input_mode = InputMode::Normal;
+        self.rebuild_visible();
+        self.select_node(node_id);
+
+        if let Some(folder_id) = highest_newly_expanded {
+            self.check_hosts_below(folder_id);
+        }
     }
 
     pub fn clear_search(&mut self) {
@@ -208,8 +243,12 @@ impl App {
         self.visible.get(self.selected).map(|row| row.node_id)
     }
 
-    pub fn select_at(&mut self, terminal_row: u16) -> bool {
-        if terminal_row < self.tree_top || terminal_row >= self.tree_top + self.tree_height {
+    pub fn select_at(&mut self, terminal_column: u16, terminal_row: u16) -> bool {
+        if terminal_column < self.tree_left
+            || terminal_column >= self.tree_left.saturating_add(self.tree_width)
+            || terminal_row < self.tree_top
+            || terminal_row >= self.tree_top.saturating_add(self.tree_height)
+        {
             return false;
         }
         let visible_index = self.visible_offset + usize::from(terminal_row - self.tree_top);
@@ -220,8 +259,9 @@ impl App {
         true
     }
 
-    pub fn click_at(&mut self, terminal_row: u16) {
-        if self.select_at(terminal_row)
+    pub fn click_at(&mut self, terminal_column: u16, terminal_row: u16) -> bool {
+        let selected = self.select_at(terminal_column, terminal_row);
+        if selected
             && self
                 .selected_node_id()
                 .map(|node_id| matches!(self.nodes[node_id].kind, NodeKind::Folder))
@@ -229,10 +269,13 @@ impl App {
         {
             self.toggle_selected_folder();
         }
+        selected
     }
 
-    pub fn set_tree_area(&mut self, top: u16, height: u16) {
+    pub fn set_tree_area(&mut self, left: u16, top: u16, width: u16, height: u16) {
+        self.tree_left = left;
         self.tree_top = top;
+        self.tree_width = width;
         self.tree_height = height;
         self.keep_selection_visible();
     }
@@ -615,6 +658,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(visible_names, vec!["Work"]);
         assert!(app.expanded.is_empty());
+        assert_eq!(app.status, "1 host");
     }
 
     #[test]
@@ -650,6 +694,69 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
         assert_eq!(app.host_reachability(0), HostReachability::Unchecked);
+    }
+
+    #[test]
+    fn revealing_search_results_expands_and_preserves_folder_and_host_selection() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: vec![GroupEntry {
+                path: vec!["Work".into(), "Prod".into()],
+                description: Some("Production".into()),
+                expanded_by_default: false,
+                source: PathBuf::from("config"),
+                line: 1,
+            }],
+            hosts: vec![HostEntry {
+                alias: "prod-api".into(),
+                description: Some("Billing frontend".into()),
+                group_path: vec!["Work".into(), "Prod".into()],
+                source: PathBuf::from("config"),
+                line: 3,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost::default(),
+            }],
+        };
+
+        let mut folder_app = App::with_network_checks(config.clone(), false);
+        folder_app.start_search();
+        for character in "prod".chars() {
+            folder_app.push_search(character);
+        }
+        folder_app.select_next();
+        folder_app.reveal_search_selection();
+
+        assert_eq!(folder_app.input_mode, InputMode::Normal);
+        assert!(folder_app.search.is_empty());
+        assert_eq!(folder_app.selected_node().unwrap().name, "Prod");
+        assert_eq!(folder_app.expanded.len(), 2);
+        assert!(
+            folder_app
+                .visible
+                .iter()
+                .any(|row| folder_app.nodes[row.node_id].name == "prod-api")
+        );
+
+        let mut host_app = App::with_network_checks(config, false);
+        host_app.start_search();
+        for character in "billing".chars() {
+            host_app.push_search(character);
+        }
+        host_app.select_next();
+        host_app.select_next();
+        host_app.reveal_search_selection();
+
+        assert_eq!(host_app.input_mode, InputMode::Normal);
+        assert!(host_app.search.is_empty());
+        assert_eq!(host_app.selected_host().unwrap().alias, "prod-api");
+        let mut parent = host_app.selected_node().unwrap().parent;
+        while let Some(folder_id) = parent {
+            if folder_id == host_app.root_id {
+                break;
+            }
+            assert!(host_app.expanded.contains(&folder_id));
+            parent = host_app.nodes[folder_id].parent;
+        }
     }
 
     #[test]
@@ -744,17 +851,18 @@ mod tests {
 
         let mut app = App::new(config);
         assert_eq!(app.host_reachability(0), HostReachability::Unchecked);
-        app.set_tree_area(2, 10);
-        app.click_at(2);
+        app.set_tree_area(1, 2, 20, 10);
+        assert!(!app.click_at(21, 2));
+        assert!(app.click_at(1, 2));
 
         assert!(app.expanded.contains(&app.visible[0].node_id));
         assert_eq!(app.visible.len(), 2);
         assert_eq!(app.host_reachability(0), HostReachability::Checking);
 
         app.reachability.insert(0, HostReachability::Reachable);
-        app.click_at(2);
+        app.click_at(1, 2);
         assert_eq!(app.host_reachability(0), HostReachability::Reachable);
-        app.click_at(2);
+        app.click_at(1, 2);
         assert_eq!(app.host_reachability(0), HostReachability::Checking);
     }
 

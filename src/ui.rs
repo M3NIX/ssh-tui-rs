@@ -64,7 +64,7 @@ fn render_tree(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title("Tree");
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    app.set_tree_area(inner.y, inner.height);
+    app.set_tree_area(inner.x, inner.y, inner.width, inner.height);
 
     let rows = app
         .visible
@@ -363,19 +363,44 @@ fn is_connection_option(key: &str) -> bool {
 
 fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Clear, area);
-    let mode = match app.input_mode {
-        crate::InputMode::Normal => "q quit  / search  arrows/jk move  h/l fold  Enter connect",
-        crate::InputMode::Search => "Esc clear  Enter keep search  Backspace edit",
+    let bindings = match app.input_mode {
+        crate::InputMode::Normal => [
+            ("j/k", "Move"),
+            ("h/l", "Fold"),
+            ("/", "Search"),
+            ("Enter", "Connect"),
+            ("q", "Quit"),
+        ]
+        .as_slice(),
+        crate::InputMode::Search => [
+            ("Up/Down", "Move"),
+            ("Esc", "Clear"),
+            ("Enter/Space", "Reveal"),
+        ]
+        .as_slice(),
     };
-    let text = if app.status.is_empty() {
-        mode.to_string()
-    } else {
-        format!("{}  |  {}", app.status, mode)
-    };
-    frame.render_widget(
-        Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
-        area,
-    );
+    let mut spans = Vec::new();
+    for (index, (key, action)) in bindings.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("[{key}]"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(*action, Style::default().fg(Color::DarkGray)));
+    }
+    if !app.status.is_empty() {
+        spans.push(Span::styled("  |  ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            app.status.clone(),
+            Style::default().fg(Color::White),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_connection_failure(frame: &mut Frame<'_>, failure: &ConnectionFailure) {
@@ -712,6 +737,19 @@ mod tests {
 
         assert!(rendered.contains("bastion"));
         assert!(rendered.contains("HostName"));
+        assert!(rendered.contains("1 host"));
+        assert!(!rendered.contains("loaded"));
+        assert!(rendered.contains("[j/k] Move"));
+        assert!(rendered.contains("[Enter] Connect"));
+        let footer = buffer
+            .content
+            .iter()
+            .rev()
+            .take(usize::from(buffer.area.width))
+            .rev()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(footer.find("[j/k] Move") < footer.find("1 host"));
         assert!(!rendered.contains("(not set)"));
         let header = buffer
             .content
@@ -740,6 +778,18 @@ mod tests {
                 .iter()
                 .all(|index| buffer.content[index + 1].symbol() == " ")
         );
+
+        app.start_search();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("[Up/Down] Move"));
+        assert!(rendered.contains("[Enter/Space] Reveal"));
     }
 
     #[test]

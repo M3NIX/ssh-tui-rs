@@ -56,10 +56,13 @@ Controls:
 - `/` starts fuzzy search across host names, host descriptions, folder names,
   folder descriptions, hostnames, and group paths. Matches must be compact, so
   characters spread across unrelated words are ignored.
-- `Enter` launches `ssh <HostAlias>`.
+- In search mode, `Enter` or space reveals the selected result in the normal
+  tree and unfolds its complete folder path.
+- Outside search mode, `Enter` launches `ssh <HostAlias>`.
 - `--no-network-check` disables reachability probes and displays every host as
   reachable.
 - Mouse wheel scrolls selection; left click selects and toggles folders.
+  Double-clicking a host launches its SSH connection.
 
 Folders start folded. Folder and host entries are sorted alphabetically, and
 selecting a folder shows its descendant hosts in the details pane.

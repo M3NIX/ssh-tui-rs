@@ -3,7 +3,7 @@ use std::{
     io::{self, Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
@@ -20,6 +20,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use ssh_tui::{App, ConnectionFailure, InputMode, SshConfig, ui};
 
 const MAX_CAPTURED_STDERR: usize = 64 * 1024;
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 struct SshOutcome {
     status: String,
@@ -64,6 +65,7 @@ fn run(app: &mut App) -> Result<()> {
 }
 
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+    let mut last_host_click = None;
     loop {
         app.poll_reachability();
         terminal.draw(|frame| ui::draw(frame, app))?;
@@ -83,7 +85,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     if app.input_mode == InputMode::Search {
                         match key.code {
                             KeyCode::Esc => app.clear_search(),
-                            KeyCode::Enter => app.finish_search(),
+                            KeyCode::Enter | KeyCode::Char(' ') => app.reveal_search_selection(),
                             KeyCode::Backspace => app.pop_search(),
                             KeyCode::Char(c) => app.push_search(c),
                             KeyCode::Up => app.select_previous(),
@@ -101,12 +103,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         KeyCode::Char('h') | KeyCode::Left => app.collapse_selected(),
                         KeyCode::Char('l') | KeyCode::Right => app.expand_or_enter_selected(),
                         KeyCode::Enter => {
-                            if let Some(host) = app.selected_host() {
-                                let outcome = launch_ssh(terminal, &host.alias)?;
-                                app.set_status(outcome.status);
-                                if let Some(failure) = outcome.failure {
-                                    app.show_connection_failure(failure);
-                                }
+                            if app.selected_host().is_some() {
+                                connect_selected_host(terminal, app)?;
                             } else {
                                 app.toggle_selected_folder();
                             }
@@ -125,7 +123,24 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     match mouse.kind {
                         MouseEventKind::ScrollDown => app.select_next(),
                         MouseEventKind::ScrollUp => app.select_previous(),
-                        MouseEventKind::Down(MouseButton::Left) => app.click_at(mouse.row),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if app.click_at(mouse.column, mouse.row)
+                                && app.selected_host().is_some()
+                            {
+                                let node_id = app
+                                    .selected_node_id()
+                                    .expect("clicked host has a selected node");
+                                let now = Instant::now();
+                                if register_host_click(&mut last_host_click, now, node_id) {
+                                    if app.input_mode == InputMode::Search {
+                                        app.reveal_search_selection();
+                                    }
+                                    connect_selected_host(terminal, app)?;
+                                }
+                            } else {
+                                last_host_click = None;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -135,6 +150,36 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
     }
 
+    Ok(())
+}
+
+fn register_host_click(
+    previous: &mut Option<(Instant, usize)>,
+    clicked_at: Instant,
+    node_id: usize,
+) -> bool {
+    let is_double_click = previous
+        .map(|(previous_at, previous_node)| {
+            previous_node == node_id
+                && clicked_at.duration_since(previous_at) <= DOUBLE_CLICK_INTERVAL
+        })
+        .unwrap_or(false);
+    *previous = (!is_double_click).then_some((clicked_at, node_id));
+    is_double_click
+}
+
+fn connect_selected_host(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<()> {
+    let Some(alias) = app.selected_host().map(|host| host.alias.clone()) else {
+        return Ok(());
+    };
+    let outcome = launch_ssh(terminal, &alias)?;
+    app.set_status(outcome.status);
+    if let Some(failure) = outcome.failure {
+        app.show_connection_failure(failure);
+    }
     Ok(())
 }
 
@@ -306,5 +351,29 @@ mod tests {
         assert!(args.no_network_check);
 
         assert!(Args::try_parse_from(["ssh-tui", "--browse-only"]).is_err());
+    }
+
+    #[test]
+    fn double_click_requires_the_same_host_within_the_interval() {
+        let start = Instant::now();
+        let mut previous = None;
+
+        assert!(!register_host_click(&mut previous, start, 1));
+        assert!(!register_host_click(
+            &mut previous,
+            start + Duration::from_millis(100),
+            2
+        ));
+        assert!(!register_host_click(
+            &mut previous,
+            start + DOUBLE_CLICK_INTERVAL + Duration::from_millis(101),
+            2
+        ));
+        assert!(register_host_click(
+            &mut previous,
+            start + DOUBLE_CLICK_INTERVAL + Duration::from_millis(200),
+            2
+        ));
+        assert!(previous.is_none());
     }
 }
