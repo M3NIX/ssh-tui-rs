@@ -41,23 +41,23 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let search = if app.search.is_empty() {
-        "Search: /".to_string()
+    let query = if app.search.is_empty() {
+        "/"
     } else {
-        format!("Search: {}", app.search)
+        &app.search
     };
-    let title = Line::from(vec![
+    let search = Line::from(vec![
         Span::styled(
-            "ssh-tui",
+            "🔍",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  "),
-        Span::styled(search, Style::default().fg(Color::Yellow)),
+        Span::raw(" "),
+        Span::styled(query.to_string(), Style::default().fg(Color::Yellow)),
     ]);
-    let block = Block::default().borders(Borders::ALL).title("Connections");
-    frame.render_widget(Paragraph::new(title).block(block), area);
+    let block = Block::default().borders(Borders::ALL).title("Search");
+    frame.render_widget(Paragraph::new(search).block(block), area);
 }
 
 fn render_tree(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
@@ -719,6 +719,12 @@ mod tests {
             .take(usize::from(buffer.area.width * 3))
             .map(|cell| cell.symbol())
             .collect::<String>();
+        assert!(header.contains("Search"));
+        assert!(header.contains("🔍"));
+        assert!(header.contains('/'));
+        assert!(!header.contains("Connections"));
+        assert!(!header.contains("Search:"));
+        assert!(!header.contains("ssh-tui"));
         assert!(!header.contains("1 hosts"));
         let checking_dots = buffer
             .content
