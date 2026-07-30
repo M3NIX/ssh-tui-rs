@@ -7,6 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow};
 
@@ -213,32 +214,28 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
         panes[0],
     );
 
-    let rows = descendant_hosts(app, node.id)
+    let hosts_in_folder = descendant_hosts(app, node.id);
+    let selected_path = node_path_parts(app, node.id);
+    let column_widths = folder_column_widths(&hosts_in_folder, &selected_path, panes[1].width);
+    let rows = hosts_in_folder
         .into_iter()
-        .map(|(_, host)| folder_host_row(host, app.search.trim()))
+        .map(|(_, host)| folder_host_row(host, &selected_path, app.search.trim()))
         .collect::<Vec<_>>();
     frame.render_widget(
-        Table::new(
-            rows,
-            [
-                Constraint::Percentage(28),
-                Constraint::Percentage(30),
-                Constraint::Percentage(42),
-            ],
-        )
-        .header(
-            Row::new(["Host", "HostName", "Description"]).style(
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
+        Table::new(rows, column_widths)
+            .header(
+                Row::new(["Alias", "HostName", "Description"]).style(
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            )
+            .column_spacing(1)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!("Hosts ({hosts})")),
             ),
-        )
-        .column_spacing(2)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("Hosts ({hosts})")),
-        ),
         panes[1],
     );
 }
@@ -498,26 +495,87 @@ fn descendant_hosts(app: &App, node_id: usize) -> Vec<(usize, &crate::HostEntry)
     collect(app, node_id, &mut hosts);
     hosts.sort_by(|left, right| {
         left.1
-            .alias
-            .to_lowercase()
-            .cmp(&right.1.alias.to_lowercase())
+            .group_path
+            .iter()
+            .map(|segment| segment.to_lowercase())
+            .cmp(
+                right
+                    .1
+                    .group_path
+                    .iter()
+                    .map(|segment| segment.to_lowercase()),
+            )
+            .then_with(|| left.1.group_path.cmp(&right.1.group_path))
+            .then_with(|| {
+                left.1
+                    .alias
+                    .to_lowercase()
+                    .cmp(&right.1.alias.to_lowercase())
+            })
             .then_with(|| left.1.alias.cmp(&right.1.alias))
     });
     hosts
 }
 
-fn folder_host_row(host: &crate::HostEntry, query: &str) -> Row<'static> {
+fn folder_column_widths(
+    hosts: &[(usize, &crate::HostEntry)],
+    selected_path: &[String],
+    area_width: u16,
+) -> [Constraint; 3] {
+    let available = area_width.saturating_sub(4);
+    let natural_alias_width = hosts
+        .iter()
+        .map(|(_, host)| folder_alias(host, selected_path).width())
+        .max()
+        .unwrap_or_default()
+        .max("Alias".len());
+    let natural_hostname_width = hosts
+        .iter()
+        .filter_map(|(_, host)| host.resolved.host_name.as_deref())
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or_default()
+        .max("HostName".len());
+    let alias_width = u16::try_from(natural_alias_width)
+        .unwrap_or(u16::MAX)
+        .min(available.saturating_mul(2) / 5);
+    let hostname_width = u16::try_from(natural_hostname_width)
+        .unwrap_or(u16::MAX)
+        .min(available.saturating_mul(3) / 10);
+
+    [
+        Constraint::Length(alias_width),
+        Constraint::Length(hostname_width),
+        Constraint::Fill(1),
+    ]
+}
+
+fn folder_host_row(host: &crate::HostEntry, selected_path: &[String], query: &str) -> Row<'static> {
     let host_name = host.resolved.host_name.as_deref().unwrap_or_default();
     let description = host.description.as_deref().unwrap_or_default();
+    let relative_group = host
+        .group_path
+        .strip_prefix(selected_path)
+        .unwrap_or(&host.group_path);
+    let mut alias = Vec::new();
+    if !relative_group.is_empty() {
+        alias.extend(fuzzy_highlighted(
+            &relative_group.join("/"),
+            query,
+            Style::default().fg(Color::Cyan),
+        ));
+        alias.push(Span::styled("/", Style::default().fg(Color::DarkGray)));
+    }
+    alias.extend(fuzzy_highlighted(
+        &host.alias,
+        query,
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     Row::new([
-        Cell::from(Line::from(fuzzy_highlighted(
-            &host.alias,
-            query,
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ))),
+        Cell::from(Line::from(alias)),
         Cell::from(Line::from(fuzzy_highlighted(
             host_name,
             query,
@@ -529,6 +587,18 @@ fn folder_host_row(host: &crate::HostEntry, query: &str) -> Row<'static> {
             Style::default().fg(Color::DarkGray),
         ))),
     ])
+}
+
+fn folder_alias(host: &crate::HostEntry, selected_path: &[String]) -> String {
+    let relative_group = host
+        .group_path
+        .strip_prefix(selected_path)
+        .unwrap_or(&host.group_path);
+    if relative_group.is_empty() {
+        host.alias.clone()
+    } else {
+        format!("{}/{}", relative_group.join("/"), host.alias)
+    }
 }
 
 fn host_dot(reachability: HostReachability) -> Span<'static> {
@@ -753,7 +823,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_folder_details_list_descendant_hosts_alphabetically() {
+    fn collapsed_folder_details_group_hosts_by_subfolder_then_alias() {
         let config = crate::SshConfig {
             source: "config".into(),
             groups: vec![GroupEntry {
@@ -788,6 +858,24 @@ mod tests {
                         ..ResolvedHost::default()
                     },
                 },
+                HostEntry {
+                    alias: "zulu-app".into(),
+                    description: None,
+                    group_path: vec!["Production".into(), "Applications".into()],
+                    source: PathBuf::from("config"),
+                    line: 7,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost::default(),
+                },
+                HostEntry {
+                    alias: "alpha-db".into(),
+                    description: None,
+                    group_path: vec!["Production".into(), "Databases".into()],
+                    source: PathBuf::from("config"),
+                    line: 9,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost::default(),
+                },
             ],
         };
         let mut app = App::new(config);
@@ -804,14 +892,20 @@ mod tests {
             .collect::<String>();
 
         assert!(app.expanded.is_empty());
-        assert!(rendered.contains("Hosts (2)"));
+        assert!(rendered.contains("Hosts (4)"));
+        assert!(rendered.contains("Alias"));
         assert!(rendered.contains("HostName"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("alpha-api"));
         assert!(rendered.contains("zeta-db"));
         assert!(rendered.contains("Primary database"));
-        assert!(rendered.find("alpha-api") < rendered.find("zeta-db"));
         assert!(!rendered.contains('●'));
+        let folder_id = app.visible[0].node_id;
+        let aliases = descendant_hosts(&app, folder_id)
+            .into_iter()
+            .map(|(_, host)| host.alias.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(aliases, ["alpha-api", "zulu-app", "alpha-db", "zeta-db"]);
         let rendered_rows = terminal
             .backend()
             .buffer()
@@ -827,6 +921,7 @@ mod tests {
             .iter()
             .find(|row| row.contains("zeta-db"))
             .expect("zeta-db row");
+        assert!(zeta_row.contains("Databases/zeta-db"));
         assert_eq!(alpha_row.find("api.internal"), zeta_row.find("db.internal"));
         assert_eq!(
             alpha_row.find("Public API"),
