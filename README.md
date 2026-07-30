@@ -54,9 +54,11 @@ Controls:
 - `j/k` or arrow keys move through the tree.
 - `h/l`, left/right, or space fold and unfold folders.
 - `/` starts fuzzy search across host names, host descriptions, folder names,
-  folder descriptions, and group paths.
+  folder descriptions, hostnames, and group paths. Matches must be compact, so
+  characters spread across unrelated words are ignored.
 - `Enter` launches `ssh <HostAlias>`.
-- `--browse-only` disables launching SSH.
+- `--no-network-check` disables reachability probes and displays every host as
+  reachable.
 - Mouse wheel scrolls selection; left click selects and toggles folders.
 
 Folders start folded. Folder and host entries are sorted alphabetically, and
@@ -71,6 +73,7 @@ TCP check is running, green when the configured `HostName` and `Port` are
 reachable, and red otherwise. Checks use a five-second timeout and port `22`
 when `Port` is not set. Folding and unfolding a folder refreshes its descendant
 hosts. Ungrouped hosts and hosts in `# @expanded` folders are checked on launch.
+Configuration source paths are displayed in host details but are not searched.
 
 ## Release Artifacts
 

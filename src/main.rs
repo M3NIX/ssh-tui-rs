@@ -32,25 +32,25 @@ struct Args {
     #[arg(short, long, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    #[arg(long, help = "Disable launching ssh on Enter")]
-    browse_only: bool,
+    #[arg(long, help = "Disable host reachability checks")]
+    no_network_check: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let config = SshConfig::load(args.config.as_deref())?;
-    let mut app = App::new(config);
-    run(&mut app, args.browse_only)
+    let mut app = App::with_network_checks(config, !args.no_network_check);
+    run(&mut app)
 }
 
-fn run(app: &mut App, browse_only: bool) -> Result<()> {
+fn run(app: &mut App) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_loop(&mut terminal, app, browse_only);
+    let result = run_loop(&mut terminal, app);
 
     disable_raw_mode()?;
     execute!(
@@ -63,11 +63,7 @@ fn run(app: &mut App, browse_only: bool) -> Result<()> {
     result
 }
 
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-    browse_only: bool,
-) -> Result<()> {
+fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
         app.poll_reachability();
         terminal.draw(|frame| ui::draw(frame, app))?;
@@ -106,17 +102,10 @@ fn run_loop(
                         KeyCode::Char('l') | KeyCode::Right => app.expand_or_enter_selected(),
                         KeyCode::Enter => {
                             if let Some(host) = app.selected_host() {
-                                if browse_only {
-                                    app.set_status(format!(
-                                        "Browse-only mode: ssh {} was not launched",
-                                        host.alias
-                                    ));
-                                } else {
-                                    let outcome = launch_ssh(terminal, &host.alias)?;
-                                    app.set_status(outcome.status);
-                                    if let Some(failure) = outcome.failure {
-                                        app.show_connection_failure(failure);
-                                    }
+                                let outcome = launch_ssh(terminal, &host.alias)?;
+                                app.set_status(outcome.status);
+                                if let Some(failure) = outcome.failure {
+                                    app.show_connection_failure(failure);
                                 }
                             } else {
                                 app.toggle_selected_folder();
@@ -309,5 +298,13 @@ mod tests {
 
         assert_eq!(captured, input);
         assert_eq!(relayed, input);
+    }
+
+    #[test]
+    fn parses_no_network_check_and_rejects_removed_browse_only_flag() {
+        let args = Args::try_parse_from(["ssh-tui", "--no-network-check"]).unwrap();
+        assert!(args.no_network_check);
+
+        assert!(Args::try_parse_from(["ssh-tui", "--browse-only"]).is_err());
     }
 }

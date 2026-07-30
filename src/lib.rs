@@ -1,5 +1,6 @@
 pub mod app;
 mod reachability;
+mod search;
 pub mod ssh_config;
 pub mod ui;
 

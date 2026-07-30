@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -52,11 +51,6 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
         ),
         Span::raw("  "),
         Span::styled(search, Style::default().fg(Color::Yellow)),
-        Span::raw("  "),
-        Span::styled(
-            format!("{} hosts", app.config.hosts.len()),
-            Style::default().fg(Color::Gray),
-        ),
     ]);
     let block = Block::default().borders(Borders::ALL).title("Connections");
     frame.render_widget(Paragraph::new(title).block(block), area);
@@ -467,13 +461,7 @@ fn fuzzy_highlighted(value: &str, query: &str, base: Style) -> Vec<Span<'static>
 }
 
 fn fuzzy_indices(value: &str, query: &str) -> Option<Vec<usize>> {
-    let query = query.trim();
-    if query.is_empty() {
-        return None;
-    }
-    SkimMatcherV2::default()
-        .fuzzy_indices(value, query)
-        .map(|(_, indices)| indices)
+    crate::search::fuzzy_indices(value, query)
 }
 
 fn section_height(lines: &[Line<'_>], width: u16) -> u16 {
@@ -682,6 +670,13 @@ mod tests {
         assert!(rendered.contains("bastion"));
         assert!(rendered.contains("HostName"));
         assert!(!rendered.contains("(not set)"));
+        let header = buffer
+            .content
+            .iter()
+            .take(usize::from(buffer.area.width * 3))
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!header.contains("1 hosts"));
         let checking_dots = buffer
             .content
             .iter()

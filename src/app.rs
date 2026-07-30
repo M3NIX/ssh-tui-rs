@@ -4,11 +4,10 @@ use std::{
     time::Duration,
 };
 
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-
 use crate::{
     GroupEntry, HostEntry, HostReachability, SshConfig,
     reachability::{CheckResult, CheckTarget, spawn_checks},
+    search,
 };
 
 const REACHABILITY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -41,7 +40,7 @@ pub struct Node {
     pub parent: Option<usize>,
     pub children: Vec<usize>,
     pub kind: NodeKind,
-    pub search_text: String,
+    pub search_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,11 +66,16 @@ pub struct App {
     pub status: String,
     pub reachability: HashMap<usize, HostReachability>,
     pub connection_failure: Option<ConnectionFailure>,
+    network_checks_enabled: bool,
     reachability_updates: Vec<mpsc::Receiver<CheckResult>>,
 }
 
 impl App {
     pub fn new(config: SshConfig) -> Self {
+        Self::with_network_checks(config, true)
+    }
+
+    pub fn with_network_checks(config: SshConfig, network_checks_enabled: bool) -> Self {
         let (nodes, root_id, expanded, initially_expanded) = build_tree(&config);
         let mut app = Self {
             config,
@@ -88,6 +92,7 @@ impl App {
             status: String::new(),
             reachability: HashMap::new(),
             connection_failure: None,
+            network_checks_enabled,
             reachability_updates: Vec::new(),
         };
         app.rebuild_visible();
@@ -265,6 +270,9 @@ impl App {
     }
 
     pub fn host_reachability(&self, host_index: usize) -> HostReachability {
+        if !self.network_checks_enabled {
+            return HostReachability::Reachable;
+        }
         self.reachability
             .get(&host_index)
             .copied()
@@ -282,6 +290,9 @@ impl App {
     }
 
     fn check_host_indices(&mut self, host_indices: Vec<usize>) {
+        if !self.network_checks_enabled {
+            return;
+        }
         let mut targets = Vec::new();
         for host_index in host_indices {
             if self.host_reachability(host_index) == HostReachability::Checking {
@@ -326,11 +337,10 @@ impl App {
 
     pub fn rebuild_visible(&mut self) {
         let previous = self.selected_node_id();
-        let matcher = SkimMatcherV2::default();
         let mut rows = Vec::new();
 
         for child in self.nodes[self.root_id].children.clone() {
-            self.collect_visible(child, 0, false, &matcher, &mut rows);
+            self.collect_visible(child, 0, false, &mut rows);
         }
 
         self.visible = rows;
@@ -361,11 +371,10 @@ impl App {
         node_id: usize,
         depth: usize,
         ancestor_matches: bool,
-        matcher: &SkimMatcherV2,
         rows: &mut Vec<VisibleRow>,
     ) -> bool {
         let node = &self.nodes[node_id];
-        let (self_matches, indices) = self.match_node(node, matcher);
+        let (self_matches, indices) = self.match_node(node);
         let mut child_rows = Vec::new();
         let search_active = !self.search.trim().is_empty();
         let traverse_children = search_active || self.expanded.contains(&node_id);
@@ -377,7 +386,6 @@ impl App {
                     *child,
                     depth + 1,
                     ancestor_matches || self_matches,
-                    matcher,
                     &mut child_rows,
                 );
             }
@@ -396,19 +404,21 @@ impl App {
         }
     }
 
-    fn match_node(&self, node: &Node, matcher: &SkimMatcherV2) -> (bool, Vec<usize>) {
+    fn match_node(&self, node: &Node) -> (bool, Vec<usize>) {
         let query = self.search.trim();
         if query.is_empty() {
             return (true, Vec::new());
         }
 
         let display = self.display_name(node);
-        if let Some((_score, indices)) = matcher.fuzzy_indices(display, query) {
+        if let Some(indices) = search::fuzzy_indices(display, query) {
             return (true, indices);
         }
 
         (
-            matcher.fuzzy_match(&node.search_text, query).is_some(),
+            node.search_fields
+                .iter()
+                .any(|field| search::fuzzy_indices(field, query).is_some()),
             Vec::new(),
         )
     }
@@ -422,7 +432,7 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>, Vec<usiz
         parent: None,
         children: Vec::new(),
         kind: NodeKind::Root,
-        search_text: String::new(),
+        search_fields: Vec::new(),
     }];
     let root_id = 0;
     let mut expanded = HashSet::new();
@@ -451,13 +461,16 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>, Vec<usiz
             ensure_folder_path(&mut nodes, &mut folders, root_id, &synthetic)
         };
         let id = nodes.len();
-        let search_text = [
-            &host.alias,
-            host.description.as_deref().unwrap_or_default(),
-            &host.group_path.join("/"),
-            host.resolved.host_name.as_deref().unwrap_or_default(),
+        let search_fields = [
+            Some(host.alias.clone()),
+            host.description.clone(),
+            Some(host.group_path.join("/")),
+            host.resolved.host_name.clone(),
         ]
-        .join(" ");
+        .into_iter()
+        .flatten()
+        .filter(|field| !field.is_empty())
+        .collect();
         nodes.push(Node {
             id,
             name: host.alias.clone(),
@@ -465,7 +478,7 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>, Vec<usiz
             parent: Some(parent),
             children: Vec::new(),
             kind: NodeKind::Host(host_index),
-            search_text,
+            search_fields,
         });
         nodes[parent].children.push(id);
     }
@@ -512,12 +525,15 @@ fn ensure_folder_path(
         } else {
             None
         };
-        let search_text = [
-            path.join("/"),
-            segment.clone(),
-            description.clone().unwrap_or_default(),
+        let search_fields = [
+            Some(path.join("/")),
+            Some(segment.clone()),
+            description.clone(),
         ]
-        .join(" ");
+        .into_iter()
+        .flatten()
+        .filter(|field| !field.is_empty())
+        .collect();
         nodes.push(Node {
             id,
             name: segment.clone(),
@@ -525,7 +541,7 @@ fn ensure_folder_path(
             parent: Some(parent),
             children: Vec::new(),
             kind: NodeKind::Folder,
-            search_text,
+            search_fields,
         });
         nodes[parent].children.push(id);
         folders.insert(path.clone(), id);
@@ -634,6 +650,70 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
         assert_eq!(app.host_reachability(0), HostReachability::Unchecked);
+    }
+
+    #[test]
+    fn search_ignores_source_paths_and_rejects_scattered_description_matches() {
+        let config = SshConfig {
+            source: PathBuf::from("/home/m3nix/.ssh/config"),
+            groups: vec![GroupEntry {
+                path: vec!["Testlab".into()],
+                description: Some("all hosts from testlab".into()),
+                expanded_by_default: false,
+                source: PathBuf::from("/home/m3nix/.ssh/config.d/test.conf"),
+                line: 1,
+            }],
+            hosts: vec![HostEntry {
+                alias: "lab-api".into(),
+                description: Some("internal endpoint".into()),
+                group_path: vec!["Testlab".into()],
+                source: PathBuf::from("/home/m3nix/.ssh/config.d/test.conf"),
+                line: 3,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost {
+                    host_name: Some("test1.internal".into()),
+                    ..ResolvedHost::default()
+                },
+            }],
+        };
+
+        let mut app = App::new(config);
+        app.search = "home".into();
+        app.rebuild_visible();
+
+        assert!(app.visible.is_empty());
+    }
+
+    #[test]
+    fn disabled_network_checks_report_every_host_as_reachable() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: vec![GroupEntry {
+                path: vec!["Work".into()],
+                description: None,
+                expanded_by_default: false,
+                source: PathBuf::from("config"),
+                line: 1,
+            }],
+            hosts: vec![HostEntry {
+                alias: "offline".into(),
+                description: None,
+                group_path: vec!["Work".into()],
+                source: PathBuf::from("config"),
+                line: 2,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost::default(),
+            }],
+        };
+
+        let mut app = App::with_network_checks(config, false);
+        assert_eq!(app.host_reachability(0), HostReachability::Reachable);
+
+        app.toggle_selected_folder();
+
+        assert_eq!(app.host_reachability(0), HostReachability::Reachable);
+        assert!(app.reachability.is_empty());
+        assert!(app.reachability_updates.is_empty());
     }
 
     #[test]
