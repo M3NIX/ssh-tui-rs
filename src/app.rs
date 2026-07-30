@@ -177,6 +177,17 @@ impl App {
         true
     }
 
+    pub fn click_at(&mut self, terminal_row: u16) {
+        if self.select_at(terminal_row)
+            && self
+                .selected_node_id()
+                .map(|node_id| matches!(self.nodes[node_id].kind, NodeKind::Folder))
+                .unwrap_or(false)
+        {
+            self.toggle_selected_folder();
+        }
+    }
+
     pub fn set_tree_area(&mut self, top: u16, height: u16) {
         self.tree_top = top;
         self.tree_height = height;
@@ -204,7 +215,7 @@ impl App {
         let mut rows = Vec::new();
 
         for child in self.nodes[self.root_id].children.clone() {
-            self.collect_visible(child, 0, &matcher, &mut rows);
+            self.collect_visible(child, 0, false, &matcher, &mut rows);
         }
 
         self.visible = rows;
@@ -234,6 +245,7 @@ impl App {
         &self,
         node_id: usize,
         depth: usize,
+        ancestor_matches: bool,
         matcher: &SkimMatcherV2,
         rows: &mut Vec<VisibleRow>,
     ) -> bool {
@@ -246,12 +258,17 @@ impl App {
 
         if traverse_children {
             for child in &node.children {
-                descendant_matches |=
-                    self.collect_visible(*child, depth + 1, matcher, &mut child_rows);
+                descendant_matches |= self.collect_visible(
+                    *child,
+                    depth + 1,
+                    ancestor_matches || self_matches,
+                    matcher,
+                    &mut child_rows,
+                );
             }
         }
 
-        if !search_active || self_matches || descendant_matches {
+        if !search_active || ancestor_matches || self_matches || descendant_matches {
             rows.push(VisibleRow {
                 node_id,
                 depth,
@@ -480,5 +497,34 @@ mod tests {
             .map(|row| app.nodes[row.node_id].name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
+    }
+
+    #[test]
+    fn click_toggles_folder_rows() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: vec![GroupEntry {
+                path: vec!["Work".into()],
+                description: None,
+                source: PathBuf::from("config"),
+                line: 1,
+            }],
+            hosts: vec![HostEntry {
+                alias: "prod-api".into(),
+                description: None,
+                group_path: vec!["Work".into()],
+                source: PathBuf::from("config"),
+                line: 2,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost::default(),
+            }],
+        };
+
+        let mut app = App::new(config);
+        app.set_tree_area(2, 10);
+        app.click_at(2);
+
+        assert!(!app.expanded.contains(&app.visible[0].node_id));
+        assert_eq!(app.visible.len(), 1);
     }
 }

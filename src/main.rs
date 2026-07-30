@@ -16,7 +16,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use ssh_tui::{App, InputMode, NodeKind, SshConfig, ui};
+use ssh_tui::{App, InputMode, SshConfig, ui};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Keyboard-first SSH config browser")]
@@ -108,16 +108,7 @@ fn run_loop(
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollDown => app.select_next(),
                     MouseEventKind::ScrollUp => app.select_previous(),
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        if app.select_at(mouse.row) {
-                            if matches!(
-                                app.selected_node().map(|node| &node.kind),
-                                Some(&NodeKind::Folder)
-                            ) {
-                                app.toggle_selected_folder();
-                            }
-                        }
-                    }
+                    MouseEventKind::Down(MouseButton::Left) => app.click_at(mouse.row),
                     _ => {}
                 },
                 Event::Resize(_, _) => {}
