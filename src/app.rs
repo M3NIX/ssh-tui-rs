@@ -310,11 +310,11 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
         search_text: String::new(),
     }];
     let root_id = 0;
-    let mut expanded = HashSet::from([root_id]);
+    let expanded = HashSet::new();
     let mut folders: HashMap<Vec<String>, usize> = HashMap::new();
 
     for group in &config.groups {
-        ensure_folder_path(&mut nodes, &mut folders, &mut expanded, root_id, group);
+        ensure_folder_path(&mut nodes, &mut folders, root_id, group);
     }
 
     for (host_index, host) in config.hosts.iter().enumerate() {
@@ -327,7 +327,7 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
                 source: host.source.clone(),
                 line: host.line,
             };
-            ensure_folder_path(&mut nodes, &mut folders, &mut expanded, root_id, &synthetic)
+            ensure_folder_path(&mut nodes, &mut folders, root_id, &synthetic)
         };
         let id = nodes.len();
         let search_text = [
@@ -356,7 +356,6 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
 fn ensure_folder_path(
     nodes: &mut Vec<Node>,
     folders: &mut HashMap<Vec<String>, usize>,
-    expanded: &mut HashSet<usize>,
     root_id: usize,
     group: &GroupEntry,
 ) -> usize {
@@ -393,7 +392,6 @@ fn ensure_folder_path(
         });
         nodes[parent].children.push(id);
         folders.insert(path.clone(), id);
-        expanded.insert(id);
         parent = id;
     }
 
@@ -405,14 +403,12 @@ fn sort_children(node_id: usize, nodes: &mut [Node]) {
     children.sort_by(|left, right| {
         let left_node = &nodes[*left];
         let right_node = &nodes[*right];
-        let left_kind = kind_rank(&left_node.kind);
-        let right_kind = kind_rank(&right_node.kind);
-        left_kind.cmp(&right_kind).then_with(|| {
-            left_node
-                .name
-                .to_lowercase()
-                .cmp(&right_node.name.to_lowercase())
-        })
+        left_node
+            .name
+            .to_lowercase()
+            .cmp(&right_node.name.to_lowercase())
+            .then_with(|| kind_rank(&left_node.kind).cmp(&kind_rank(&right_node.kind)))
+            .then_with(|| left_node.name.cmp(&right_node.name))
     });
     for child in &children {
         sort_children(*child, nodes);
@@ -463,7 +459,8 @@ mod tests {
             .iter()
             .map(|row| app.nodes[row.node_id].name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
+        assert_eq!(visible_names, vec!["Work"]);
+        assert!(app.expanded.is_empty());
     }
 
     #[test]
@@ -524,7 +521,57 @@ mod tests {
         app.set_tree_area(2, 10);
         app.click_at(2);
 
-        assert!(!app.expanded.contains(&app.visible[0].node_id));
-        assert_eq!(app.visible.len(), 1);
+        assert!(app.expanded.contains(&app.visible[0].node_id));
+        assert_eq!(app.visible.len(), 2);
+    }
+
+    #[test]
+    fn siblings_are_sorted_alphabetically_regardless_of_kind() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: vec![
+                GroupEntry {
+                    path: vec!["zebra".into()],
+                    description: None,
+                    source: PathBuf::from("config"),
+                    line: 1,
+                },
+                GroupEntry {
+                    path: vec!["Bravo".into()],
+                    description: None,
+                    source: PathBuf::from("config"),
+                    line: 2,
+                },
+            ],
+            hosts: vec![
+                HostEntry {
+                    alias: "charlie".into(),
+                    description: None,
+                    group_path: Vec::new(),
+                    source: PathBuf::from("config"),
+                    line: 3,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost::default(),
+                },
+                HostEntry {
+                    alias: "alpha".into(),
+                    description: None,
+                    group_path: Vec::new(),
+                    source: PathBuf::from("config"),
+                    line: 4,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost::default(),
+                },
+            ],
+        };
+
+        let app = App::new(config);
+        let visible_names = app
+            .visible
+            .iter()
+            .map(|row| app.nodes[row.node_id].name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(visible_names, vec!["alpha", "Bravo", "charlie", "zebra"]);
     }
 }

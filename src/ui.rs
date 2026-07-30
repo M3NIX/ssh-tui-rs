@@ -84,22 +84,36 @@ fn render_tree_row(app: &App, row: &VisibleRow, selected: bool) -> Line<'static>
     let mut spans = Vec::new();
     spans.push(Span::raw("  ".repeat(row.depth)));
 
-    let marker = match node.kind {
-        NodeKind::Root => "  ",
+    let (marker, marker_style, name_style) = match node.kind {
+        NodeKind::Root => ("  ", Style::default(), Style::default().fg(Color::White)),
         NodeKind::Folder => {
-            if app.expanded.contains(&node.id) || !app.search.is_empty() {
-                "[-] "
+            let marker = if app.expanded.contains(&node.id) || !app.search.is_empty() {
+                "▾ "
             } else {
-                "[+] "
-            }
+                "▸ "
+            };
+            (
+                marker,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
         }
-        NodeKind::Host(_) => "> ",
+        NodeKind::Host(_) => (
+            "● ",
+            Style::default().fg(Color::Green),
+            Style::default().fg(Color::White),
+        ),
     };
-    spans.push(Span::styled(marker, Style::default().fg(Color::DarkGray)));
+    spans.push(Span::styled(marker, marker_style));
     spans.extend(highlighted_name(
         app.display_name(node),
         &row.matched_indices,
         selected,
+        name_style,
     ));
 
     if selected {
@@ -109,15 +123,18 @@ fn render_tree_row(app: &App, row: &VisibleRow, selected: bool) -> Line<'static>
     }
 }
 
-fn highlighted_name(name: &str, matched: &[usize], selected: bool) -> Vec<Span<'static>> {
+fn highlighted_name(
+    name: &str,
+    matched: &[usize],
+    selected: bool,
+    base: Style,
+) -> Vec<Span<'static>> {
     let matched = matched.iter().copied().collect::<HashSet<_>>();
     let mut spans = Vec::new();
     let base = if selected {
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
+        base.add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        base
     };
     let highlight = Style::default()
         .fg(Color::Black)
@@ -136,121 +153,173 @@ fn highlighted_name(name: &str, matched: &[usize], selected: bool) -> Vec<Span<'
 }
 
 fn render_details(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title("Details");
     let Some(node) = app.selected_node() else {
-        frame.render_widget(Paragraph::new("No hosts found").block(block), area);
+        frame.render_widget(
+            Paragraph::new("No hosts found")
+                .block(Block::default().borders(Borders::ALL).title("Details")),
+            area,
+        );
         return;
     };
 
-    let lines = match node.kind {
-        NodeKind::Root | NodeKind::Folder => folder_details(app, node),
-        NodeKind::Host(host_index) => host_details(app, &app.config.hosts[host_index]),
-    };
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    match node.kind {
+        NodeKind::Root | NodeKind::Folder => render_folder_details(frame, app, node, area),
+        NodeKind::Host(host_index) => {
+            render_host_details(frame, &app.config.hosts[host_index], area)
+        }
+    }
 }
 
-fn folder_details(app: &App, node: &Node) -> Vec<Line<'static>> {
+fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Rect) {
     let path = node_path(app, node.id);
     let (folders, hosts) = count_descendants(app, node.id);
-    let mut lines = vec![
+    let mut overview = vec![
         Line::from(Span::styled(
             node.name.clone(),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(""),
         field_line("Path", if path.is_empty() { "/" } else { &path }),
-        field_line("Folders", &folders.to_string()),
-        field_line("Hosts", &hosts.to_string()),
     ];
-
     if let Some(description) = &node.description {
-        lines.push(Line::from(""));
-        lines.push(field_line("Description", description));
+        overview.push(field_line("Description", description));
+    }
+    if folders > 0 {
+        overview.push(field_line("Subfolders", &folders.to_string()));
+    }
+
+    let overview_height = section_height(&overview, area.width);
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(overview_height), Constraint::Min(3)])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(overview)
+            .block(Block::default().borders(Borders::ALL).title("Folder"))
+            .wrap(Wrap { trim: false }),
+        panes[0],
+    );
+
+    let items = descendant_hosts(app, node.id)
+        .into_iter()
+        .map(|host| folder_host_line(host, &node_path_parts(app, node.id)))
+        .map(ListItem::new)
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Hosts ({hosts})")),
+        ),
+        panes[1],
+    );
+}
+
+fn render_host_details(frame: &mut Frame<'_>, host: &crate::HostEntry, area: Rect) {
+    let mut overview = vec![Line::from(Span::styled(
+        host.alias.clone(),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    if !host.group_path.is_empty() {
+        overview.push(field_line("Group", &host.group_path.join("/")));
+    }
+    if let Some(description) = &host.description {
+        overview.push(field_line("Description", description));
+    }
+
+    let connection = connection_lines(host);
+    let configuration = configuration_lines(host);
+    let mut constraints = vec![Constraint::Length(section_height(&overview, area.width))];
+    if !connection.is_empty() {
+        constraints.push(Constraint::Length(section_height(&connection, area.width)));
+    }
+    constraints.push(Constraint::Min(3));
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    let mut pane = 0;
+    frame.render_widget(
+        Paragraph::new(overview)
+            .block(Block::default().borders(Borders::ALL).title("Host"))
+            .wrap(Wrap { trim: false }),
+        panes[pane],
+    );
+    pane += 1;
+
+    if !connection.is_empty() {
+        frame.render_widget(
+            Paragraph::new(connection)
+                .block(Block::default().borders(Borders::ALL).title("Connection"))
+                .wrap(Wrap { trim: false }),
+            panes[pane],
+        );
+        pane += 1;
+    }
+
+    frame.render_widget(
+        Paragraph::new(configuration)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Configuration"),
+            )
+            .wrap(Wrap { trim: false }),
+        panes[pane],
+    );
+}
+
+fn connection_lines(host: &crate::HostEntry) -> Vec<Line<'static>> {
+    let resolved = &host.resolved;
+    let mut lines = Vec::new();
+    if let Some(host_name) = &resolved.host_name {
+        lines.push(field_line("HostName", host_name));
+    }
+    if let Some(user) = &resolved.user {
+        lines.push(field_line("User", user));
+    }
+    if let Some(port) = resolved.port {
+        lines.push(field_line("Port", &port.to_string()));
+    }
+    if !resolved.proxy_jump.is_empty() {
+        lines.push(field_line("ProxyJump", &resolved.proxy_jump.join(", ")));
+    }
+    if !resolved.identity_files.is_empty() {
+        lines.push(field_line(
+            "IdentityFile",
+            &resolved
+                .identity_files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
     }
     lines
 }
 
-fn host_details(app: &App, host: &crate::HostEntry) -> Vec<Line<'static>> {
-    let group = if host.group_path.is_empty() {
-        "/".to_string()
-    } else {
-        host.group_path.join("/")
-    };
-    let resolved = &host.resolved;
-    let mut lines = vec![
-        Line::from(Span::styled(
-            host.alias.clone(),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        field_line("Host", &host.alias),
-        field_line(
-            "HostName",
-            resolved.host_name.as_deref().unwrap_or("(not set)"),
-        ),
-        field_line("User", resolved.user.as_deref().unwrap_or("(not set)")),
-        field_line(
-            "Port",
-            &resolved
-                .port
-                .map(|port| port.to_string())
-                .unwrap_or_else(|| "(not set)".to_string()),
-        ),
-        field_line("ProxyJump", &empty_or_joined(&resolved.proxy_jump, ", ")),
-        field_line(
-            "IdentityFile",
-            &empty_or_joined(
-                &resolved
-                    .identity_files
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>(),
-                ", ",
-            ),
-        ),
-        field_line("Group", &group),
-        field_line(
-            "Source",
-            &format!("{}:{}", host.source.display(), host.line),
-        ),
-    ];
-
-    if let Some(description) = &host.description {
-        lines.push(Line::from(""));
-        lines.push(field_line("Description", description));
-    }
-
-    if !host.options.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Block options",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        for (key, values) in &host.options {
+fn configuration_lines(host: &crate::HostEntry) -> Vec<Line<'static>> {
+    let mut lines = vec![field_line(
+        "Source",
+        &format!("{}:{}", host.source.display(), host.line),
+    )];
+    for (key, values) in &host.options {
+        if !is_connection_option(key) {
             lines.push(field_line(key, &values.join(" ")));
         }
     }
-
-    if app.search.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Enter connects with ssh. Space folds folders.",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
     lines
+}
+
+fn is_connection_option(key: &str) -> bool {
+    ["HostName", "User", "Port", "ProxyJump", "IdentityFile"]
+        .iter()
+        .any(|known| key.eq_ignore_ascii_case(known))
 }
 
 fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -282,15 +351,70 @@ fn field_line(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
-fn empty_or_joined(values: &[String], separator: &str) -> String {
-    if values.is_empty() {
-        "(not set)".to_string()
-    } else {
-        values.join(separator)
+fn section_height(lines: &[Line<'_>], width: u16) -> u16 {
+    let inner_width = usize::from(width.saturating_sub(2).max(1));
+    let content_height = lines
+        .iter()
+        .map(|line| line.width().div_ceil(inner_width).max(1))
+        .sum::<usize>();
+    u16::try_from(content_height.saturating_add(2)).unwrap_or(u16::MAX)
+}
+
+fn descendant_hosts(app: &App, node_id: usize) -> Vec<&crate::HostEntry> {
+    fn collect<'a>(app: &'a App, node_id: usize, hosts: &mut Vec<&'a crate::HostEntry>) {
+        for child in &app.nodes[node_id].children {
+            match app.nodes[*child].kind {
+                NodeKind::Folder | NodeKind::Root => collect(app, *child, hosts),
+                NodeKind::Host(host_index) => hosts.push(&app.config.hosts[host_index]),
+            }
+        }
     }
+
+    let mut hosts = Vec::new();
+    collect(app, node_id, &mut hosts);
+    hosts.sort_by(|left, right| {
+        left.alias
+            .to_lowercase()
+            .cmp(&right.alias.to_lowercase())
+            .then_with(|| left.alias.cmp(&right.alias))
+    });
+    hosts
+}
+
+fn folder_host_line(host: &crate::HostEntry, selected_path: &[String]) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled("● ", Style::default().fg(Color::Green)),
+        Span::styled(
+            host.alias.clone(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    let relative_group = host
+        .group_path
+        .strip_prefix(selected_path)
+        .unwrap_or(&host.group_path);
+    if !relative_group.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", relative_group.join("/")),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+    if let Some(host_name) = &host.resolved.host_name {
+        spans.push(Span::styled(
+            format!("  {host_name}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn node_path(app: &App, node_id: usize) -> String {
+    node_path_parts(app, node_id).join("/")
+}
+
+fn node_path_parts(app: &App, node_id: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = Some(node_id);
     while let Some(id) = current {
@@ -301,7 +425,7 @@ fn node_path(app: &App, node_id: usize) -> String {
         current = node.parent;
     }
     parts.reverse();
-    parts.join("/")
+    parts
 }
 
 fn count_descendants(app: &App, node_id: usize) -> (usize, usize) {
@@ -324,9 +448,11 @@ fn count_descendants(app: &App, node_id: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, path::PathBuf};
+
     use ratatui::{Terminal, backend::TestBackend};
 
-    use crate::{ResolvedHost, ssh_config::HostEntry};
+    use crate::{GroupEntry, ResolvedHost, ssh_config::HostEntry};
 
     use super::*;
 
@@ -365,5 +491,57 @@ mod tests {
 
         assert!(rendered.contains("bastion"));
         assert!(rendered.contains("HostName"));
+        assert!(!rendered.contains("(not set)"));
+    }
+
+    #[test]
+    fn collapsed_folder_details_list_descendant_hosts_alphabetically() {
+        let config = crate::SshConfig {
+            source: "config".into(),
+            groups: vec![GroupEntry {
+                path: vec!["Production".into(), "Databases".into()],
+                description: Some("Persistent storage".into()),
+                source: PathBuf::from("config"),
+                line: 1,
+            }],
+            hosts: vec![
+                HostEntry {
+                    alias: "zeta-db".into(),
+                    description: None,
+                    group_path: vec!["Production".into(), "Databases".into()],
+                    source: PathBuf::from("config"),
+                    line: 3,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost::default(),
+                },
+                HostEntry {
+                    alias: "alpha-api".into(),
+                    description: None,
+                    group_path: vec!["Production".into()],
+                    source: PathBuf::from("config"),
+                    line: 5,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost::default(),
+                },
+            ],
+        };
+        let mut app = App::new(config);
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(app.expanded.is_empty());
+        assert!(rendered.contains("Hosts (2)"));
+        assert!(rendered.contains("alpha-api"));
+        assert!(rendered.contains("zeta-db"));
+        assert!(rendered.find("alpha-api") < rendered.find("zeta-db"));
     }
 }

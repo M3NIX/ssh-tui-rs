@@ -49,6 +49,9 @@ Controls:
 - `--browse-only` disables launching SSH.
 - Mouse wheel scrolls selection; left click selects and toggles folders.
 
+Folders start folded. Folder and host entries are sorted alphabetically, and
+selecting a folder shows its descendant hosts in the details pane.
+
 ## Release Artifacts
 
 Pushing a tag matching `v*` or `release-*` runs the GitHub Actions workflow in
