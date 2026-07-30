@@ -54,6 +54,7 @@ struct PendingHostMeta {
 #[derive(Debug, Clone)]
 struct ActiveGroup {
     path: Vec<String>,
+    accepts_description: bool,
 }
 
 #[derive(Debug, Default)]
@@ -298,6 +299,9 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
         }
 
         if keyword.eq_ignore_ascii_case("host") {
+            if let Some(group) = &mut active_group {
+                group.accepts_description = false;
+            }
             let rule_id = scan.host_rules.len();
             scan.host_rules.push(HostRule {
                 patterns: values.clone(),
@@ -371,18 +375,23 @@ fn apply_comment_metadata(
     };
 
     match key.as_str() {
-        "group" | "folder" => {
-            let (path, description) = split_metadata_value(&value);
-            let path = split_group_path(&path);
+        "group" => {
+            if value.contains('|') {
+                return;
+            }
+            let path = split_group_path(&value);
             if path.is_empty() {
                 return;
             }
-            *active_group = Some(ActiveGroup { path: path.clone() });
+            *active_group = Some(ActiveGroup {
+                path: path.clone(),
+                accepts_description: true,
+            });
             scan.groups.insert(
                 path.clone(),
                 GroupEntry {
                     path,
-                    description,
+                    description: None,
                     expanded_by_default: false,
                     source: source.to_path_buf(),
                     line,
@@ -397,39 +406,36 @@ fn apply_comment_metadata(
                 group.expanded_by_default = true;
             }
         }
-        "hidden" => pending_host.hidden = true,
-        "description" | "desc" | "host-description" | "host_description"
-            if !value.trim().is_empty() =>
-        {
-            pending_host.description = Some(value.trim().to_string());
+        "hidden" => {
+            if let Some(group) = active_group {
+                group.accepts_description = false;
+            }
+            pending_host.hidden = true;
+        }
+        "description" if !value.trim().is_empty() => {
+            if let Some(group) = active_group
+                .as_mut()
+                .filter(|group| group.accepts_description)
+            {
+                if let Some(entry) = scan.groups.get_mut(&group.path) {
+                    entry.description = Some(value.trim().to_string());
+                }
+                group.accepts_description = false;
+            } else {
+                pending_host.description = Some(value.trim().to_string());
+            }
         }
         _ => {}
     }
 }
 
 fn parse_metadata(comment: &str) -> Option<(String, String)> {
-    let normalized = comment.trim();
-    let (key, value) = if let Some(rest) = normalized.strip_prefix('@') {
-        let mut parts = rest.splitn(2, char::is_whitespace);
-        (parts.next()?, parts.next().unwrap_or(""))
-    } else {
-        normalized.split_once(':')?
-    };
+    let rest = comment.trim().strip_prefix('@')?;
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let key = parts.next()?.trim().to_ascii_lowercase();
+    let value = parts.next().unwrap_or("").trim();
 
-    let key = key.trim().to_ascii_lowercase();
-    let value = value.trim();
     (!key.is_empty()).then(|| (key, value.to_string()))
-}
-
-fn split_metadata_value(value: &str) -> (String, Option<String>) {
-    let Some((name, description)) = value.split_once('|') else {
-        return (value.trim().to_string(), None);
-    };
-    let description = description.trim();
-    (
-        name.trim().to_string(),
-        (!description.is_empty()).then(|| description.to_string()),
-    )
 }
 
 fn split_group_path(path: &str) -> Vec<String> {
@@ -551,7 +557,8 @@ mod tests {
         fs::write(
             &config,
             r#"
-# @group Work/Prod | Production machines
+# @group Work/Prod
+# @description Production machines
 # @description Handles customer traffic
 Host prod-api
   HostName 10.0.0.10
@@ -582,7 +589,8 @@ Host prod-api
         fs::write(
             &config,
             r#"
-# @group Work/Prod | Production machines
+# @group Work/Prod
+# @description Production machines
 # @expanded
 # @hidden
 Host internal-helper
@@ -657,7 +665,8 @@ Host work-web2
             r#"
 Host app-01
   HostName app.internal
-# group: Other | A new section
+# @group Other
+# @description A new section
 Host other-01
 "#,
         )
@@ -666,7 +675,8 @@ Host other-01
             &config,
             format!(
                 r#"
-# @group Work/Apps | Application servers
+# @group Work/Apps
+# @description Application servers
 Include {}
 Host after-include
 "#,
@@ -695,6 +705,31 @@ Host after-include
         assert!(app.group_path.is_empty());
         assert_eq!(other.group_path, vec!["Other"]);
         assert_eq!(after.group_path, vec!["Work", "Apps"]);
+    }
+
+    #[test]
+    fn ignores_legacy_metadata_forms() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join("config");
+        fs::write(
+            &config,
+            r#"
+# group: Legacy
+Host colon-form
+
+# @folder Legacy
+Host folder-keyword
+
+# @group Legacy | Pipe description
+Host pipe-description
+"#,
+        )
+        .unwrap();
+
+        let parsed = SshConfig::load(Some(&config)).unwrap();
+
+        assert!(parsed.groups.is_empty());
+        assert!(parsed.hosts.iter().all(|host| host.group_path.is_empty()));
     }
 
     #[test]

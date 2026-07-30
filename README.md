@@ -8,7 +8,8 @@ Metadata is stored as comments above `Host` blocks. The app never writes to SSH
 config files.
 
 ```sshconfig
-# @group Work/Production | Customer-facing systems
+# @group Work/Production
+# @description Customer-facing systems
 # @expanded
 # @description API entry point
 Host prod-api
@@ -16,7 +17,8 @@ Host prod-api
   User deploy
   Port 2222
 
-# @group Work/Production/Databases | Persistent storage
+# @group Work/Production/Databases
+# @description Persistent storage
 # @description Primary PostgreSQL node
 Host prod-db
   HostName prod-db.internal
@@ -24,19 +26,17 @@ Host prod-db
 
 Supported comments:
 
-- `# @group path/to/folder | optional description`
-- `# @folder path/to/folder | optional description`
-- `# group: path/to/folder | optional description`
-- `# folder: path/to/folder | optional description`
+- `# @group path/to/folder`
 - `# @description text`
-- `# description: text`
 - `# @hidden` above a host omits it from the TUI
 - `# @expanded` after a group opens that folder on launch
 
-A group applies to every following host in the same physical file until another
-group/folder comment is found. Each included file starts ungrouped, so metadata
-from one `config.d/*.conf` file cannot leak into the next. Folder paths use `/`
-for nesting.
+The first `# @description` after `# @group` describes that group. A subsequent
+description before a `Host` block describes that host. A group applies to every
+following host in the same physical file until another `# @group` comment is
+found. Each included file starts ungrouped, so metadata from one
+`config.d/*.conf` file cannot leak into the next. Folder paths use `/` for
+nesting.
 
 Wildcard `Host` blocks are not shown as connections, but their inherited
 options are resolved for matching concrete hosts with `ssh -G`. Inherited

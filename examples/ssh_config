@@ -1,4 +1,5 @@
-# @group Work/Production | Customer-facing production systems
+# @group Work/Production
+# @description Customer-facing production systems
 # @description Public API node
 Host prod-api
   HostName 10.0.0.10
@@ -10,14 +11,16 @@ Host bastion
   HostName bastion.example.com
   User ops
 
-# @group Work/Production/Databases | Persistent storage
+# @group Work/Production/Databases
+# @description Persistent storage
 # @description Primary database node
 Host prod-db
   HostName prod-db.internal
   User postgres
   ProxyJump bastion
 
-# @group Personal/Lab | Local experiments
+# @group Personal/Lab
+# @description Local experiments
 # @description Home lab controller
 Host lab-controller
   HostName 192.168.1.50
