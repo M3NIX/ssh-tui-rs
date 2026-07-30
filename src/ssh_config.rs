@@ -19,6 +19,7 @@ pub struct SshConfig {
 pub struct GroupEntry {
     pub path: Vec<String>,
     pub description: Option<String>,
+    pub expanded_by_default: bool,
     pub source: PathBuf,
     pub line: usize,
 }
@@ -46,6 +47,7 @@ pub struct ResolvedHost {
 #[derive(Debug, Clone, Default)]
 struct PendingHostMeta {
     description: Option<String>,
+    hidden: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +201,10 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
 
         if keyword.eq_ignore_ascii_case("host") {
             current_hosts.clear();
+            if pending_host.hidden {
+                pending_host = PendingHostMeta::default();
+                continue;
+            }
             let aliases = values
                 .iter()
                 .filter(|value| is_visible_host_alias(value))
@@ -270,12 +276,24 @@ fn apply_comment_metadata(
                 GroupEntry {
                     path,
                     description,
+                    expanded_by_default: false,
                     source: source.to_path_buf(),
                     line,
                 },
             );
         }
-        "description" | "desc" | "host-description" | "host_description" => {
+        "expanded" => {
+            if let Some(group) = active_group
+                .as_ref()
+                .and_then(|active| scan.groups.get_mut(&active.path))
+            {
+                group.expanded_by_default = true;
+            }
+        }
+        "hidden" => pending_host.hidden = true,
+        "description" | "desc" | "host-description" | "host_description"
+            if !value.trim().is_empty() =>
+        {
             pending_host.description = Some(value.trim().to_string());
         }
         _ => {}
@@ -285,14 +303,15 @@ fn apply_comment_metadata(
 fn parse_metadata(comment: &str) -> Option<(String, String)> {
     let normalized = comment.trim();
     let (key, value) = if let Some(rest) = normalized.strip_prefix('@') {
-        rest.split_once(char::is_whitespace)
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        (parts.next()?, parts.next().unwrap_or(""))
     } else {
-        normalized.split_once(':')
-    }?;
+        normalized.split_once(':')?
+    };
 
     let key = key.trim().to_ascii_lowercase();
     let value = value.trim();
-    (!key.is_empty() && !value.is_empty()).then(|| (key, value.to_string()))
+    (!key.is_empty()).then(|| (key, value.to_string()))
 }
 
 fn split_metadata_value(value: &str) -> (String, Option<String>) {
@@ -447,6 +466,32 @@ Host prod-api
             Some("Handles customer traffic")
         );
         assert_eq!(parsed.hosts[0].group_path, vec!["Work", "Prod"]);
+    }
+
+    #[test]
+    fn parses_hidden_hosts_and_expanded_groups() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join("config");
+        fs::write(
+            &config,
+            r#"
+# @group Work/Prod | Production machines
+# @expanded
+# @hidden
+Host internal-helper
+  HostName helper.internal
+
+Host prod-api
+  HostName api.internal
+"#,
+        )
+        .unwrap();
+
+        let parsed = SshConfig::load(Some(&config)).unwrap();
+
+        assert_eq!(parsed.hosts.len(), 1);
+        assert_eq!(parsed.hosts[0].alias, "prod-api");
+        assert!(parsed.groups[0].expanded_by_default);
     }
 
     #[test]

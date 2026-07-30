@@ -621,12 +621,12 @@ mod tests {
         assert!(rendered.contains("bastion"));
         assert!(rendered.contains("HostName"));
         assert!(!rendered.contains("(not set)"));
-        let unchecked_dots = buffer
+        let checking_dots = buffer
             .content
             .iter()
-            .filter(|cell| cell.symbol() == "●" && cell.fg == Color::DarkGray)
+            .filter(|cell| cell.symbol() == "●" && cell.fg == Color::Yellow)
             .count();
-        assert_eq!(unchecked_dots, 2);
+        assert_eq!(checking_dots, 2);
     }
 
     #[test]
@@ -701,6 +701,7 @@ mod tests {
             groups: vec![GroupEntry {
                 path: vec!["Production".into(), "Databases".into()],
                 description: Some("Persistent storage".into()),
+                expanded_by_default: false,
                 source: PathBuf::from("config"),
                 line: 1,
             }],

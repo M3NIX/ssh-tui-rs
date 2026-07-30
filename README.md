@@ -9,6 +9,7 @@ config files.
 
 ```sshconfig
 # @group Work/Production | Customer-facing systems
+# @expanded
 # @description API entry point
 Host prod-api
   HostName 10.0.0.10
@@ -29,6 +30,8 @@ Supported comments:
 - `# folder: path/to/folder | optional description`
 - `# @description text`
 - `# description: text`
+- `# @hidden` above a host omits it from the TUI
+- `# @expanded` after a group opens that folder on launch
 
 A group applies to every following host in the same physical file until another
 group/folder comment is found. Each included file starts ungrouped, so metadata
@@ -58,7 +61,7 @@ Host dots are gray until their folder is unfolded, yellow while a background
 TCP check is running, green when the configured `HostName` and `Port` are
 reachable, and red otherwise. Checks use a five-second timeout and port `22`
 when `Port` is not set. Folding and unfolding a folder refreshes its descendant
-hosts.
+hosts. Ungrouped hosts and hosts in `# @expanded` folders are checked on launch.
 
 ## Release Artifacts
 

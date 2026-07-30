@@ -64,7 +64,7 @@ pub struct App {
 
 impl App {
     pub fn new(config: SshConfig) -> Self {
-        let (nodes, root_id, expanded) = build_tree(&config);
+        let (nodes, root_id, expanded, initially_expanded) = build_tree(&config);
         let mut app = Self {
             config,
             nodes,
@@ -83,6 +83,18 @@ impl App {
         };
         app.rebuild_visible();
         app.status = format!("{} hosts loaded", app.config.hosts.len());
+        let ungrouped_hosts = app.nodes[app.root_id]
+            .children
+            .iter()
+            .filter_map(|node_id| match app.nodes[*node_id].kind {
+                NodeKind::Host(host_index) => Some(host_index),
+                NodeKind::Root | NodeKind::Folder => None,
+            })
+            .collect::<Vec<_>>();
+        app.check_host_indices(ungrouped_hosts);
+        for folder_id in initially_expanded {
+            app.check_hosts_below(folder_id);
+        }
         app
     }
 
@@ -249,6 +261,10 @@ impl App {
     fn check_hosts_below(&mut self, node_id: usize) {
         let mut host_indices = Vec::new();
         self.collect_host_indices(node_id, &mut host_indices);
+        self.check_host_indices(host_indices);
+    }
+
+    fn check_host_indices(&mut self, host_indices: Vec<usize>) {
         let mut targets = Vec::new();
         for host_index in host_indices {
             if self.host_reachability(host_index) == HostReachability::Checking {
@@ -381,7 +397,7 @@ impl App {
     }
 }
 
-fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
+fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>, Vec<usize>) {
     let mut nodes = vec![Node {
         id: 0,
         name: "All Hosts".to_string(),
@@ -392,11 +408,16 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
         search_text: String::new(),
     }];
     let root_id = 0;
-    let expanded = HashSet::new();
+    let mut expanded = HashSet::new();
+    let mut initially_expanded = Vec::new();
     let mut folders: HashMap<Vec<String>, usize> = HashMap::new();
 
     for group in &config.groups {
-        ensure_folder_path(&mut nodes, &mut folders, root_id, group);
+        let folder_id = ensure_folder_path(&mut nodes, &mut folders, root_id, group);
+        if group.expanded_by_default {
+            initially_expanded.push(folder_id);
+            expand_with_ancestors(folder_id, root_id, &nodes, &mut expanded);
+        }
     }
 
     for (host_index, host) in config.hosts.iter().enumerate() {
@@ -406,6 +427,7 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
             let synthetic = GroupEntry {
                 path: host.group_path.clone(),
                 description: None,
+                expanded_by_default: false,
                 source: host.source.clone(),
                 line: host.line,
             };
@@ -432,7 +454,23 @@ fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>) {
     }
 
     sort_children(root_id, &mut nodes);
-    (nodes, root_id, expanded)
+    (nodes, root_id, expanded, initially_expanded)
+}
+
+fn expand_with_ancestors(
+    node_id: usize,
+    root_id: usize,
+    nodes: &[Node],
+    expanded: &mut HashSet<usize>,
+) {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+        if id == root_id {
+            break;
+        }
+        expanded.insert(id);
+        current = nodes[id].parent;
+    }
 }
 
 fn ensure_folder_path(
@@ -521,6 +559,7 @@ mod tests {
             groups: vec![GroupEntry {
                 path: vec!["Work".into(), "Prod".into()],
                 description: Some("Production".into()),
+                expanded_by_default: false,
                 source: PathBuf::from("config"),
                 line: 1,
             }],
@@ -552,6 +591,7 @@ mod tests {
             groups: vec![GroupEntry {
                 path: vec!["Work".into(), "Prod".into()],
                 description: Some("Customer environment".into()),
+                expanded_by_default: false,
                 source: PathBuf::from("config"),
                 line: 1,
             }],
@@ -586,6 +626,7 @@ mod tests {
             groups: vec![GroupEntry {
                 path: vec!["Work".into()],
                 description: None,
+                expanded_by_default: false,
                 source: PathBuf::from("config"),
                 line: 1,
             }],
@@ -628,12 +669,14 @@ mod tests {
                 GroupEntry {
                     path: vec!["zebra".into()],
                     description: None,
+                    expanded_by_default: false,
                     source: PathBuf::from("config"),
                     line: 1,
                 },
                 GroupEntry {
                     path: vec!["Bravo".into()],
                     description: None,
+                    expanded_by_default: false,
                     source: PathBuf::from("config"),
                     line: 2,
                 },
@@ -668,5 +711,45 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(visible_names, vec!["alpha", "Bravo", "charlie", "zebra"]);
+        assert_eq!(app.host_reachability(0), HostReachability::Checking);
+        assert_eq!(app.host_reachability(1), HostReachability::Checking);
+    }
+
+    #[test]
+    fn configured_group_starts_expanded_with_its_ancestors() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: vec![GroupEntry {
+                path: vec!["Work".into(), "Prod".into()],
+                description: None,
+                expanded_by_default: true,
+                source: PathBuf::from("config"),
+                line: 1,
+            }],
+            hosts: vec![HostEntry {
+                alias: "prod-api".into(),
+                description: None,
+                group_path: vec!["Work".into(), "Prod".into()],
+                source: PathBuf::from("config"),
+                line: 3,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost {
+                    host_name: Some("127.0.0.1".into()),
+                    port: Some(0),
+                    ..ResolvedHost::default()
+                },
+            }],
+        };
+
+        let app = App::new(config);
+        let visible_names = app
+            .visible
+            .iter()
+            .map(|row| app.nodes[row.node_id].name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(visible_names, ["Work", "Prod", "prod-api"]);
+        assert_eq!(app.expanded.len(), 2);
+        assert_eq!(app.host_reachability(0), HostReachability::Checking);
     }
 }
