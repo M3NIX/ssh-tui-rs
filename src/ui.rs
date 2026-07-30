@@ -40,23 +40,39 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     }
 }
 
-fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_header(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    app.set_search_area(area.x, area.y, area.width, area.height);
+    let active = app.input_mode == crate::InputMode::Search;
     let query = if app.search.is_empty() {
         "/"
     } else {
         &app.search
     };
+    let accent = if active {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
     let search = Line::from(vec![
-        Span::styled(
-            ">",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(">", accent),
         Span::raw(" "),
-        Span::styled(query.to_string(), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            query.to_string(),
+            if active {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
+        ),
     ]);
-    let block = Block::default().borders(Borders::ALL).title("Search");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(accent)
+        .title(Span::styled("Search", accent));
     frame.render_widget(Paragraph::new(search).block(block), area);
 }
 
@@ -365,21 +381,22 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Clear, area);
     let bindings = match app.input_mode {
         crate::InputMode::Normal => [
-            ("j/k", "Move"),
-            ("h/l", "Fold"),
+            ("Space", "Fold"),
             ("/", "Search"),
             ("Enter", "Connect"),
             ("q", "Quit"),
         ]
         .as_slice(),
-        crate::InputMode::Search => [
-            ("Up/Down", "Move"),
-            ("Esc", "Clear"),
-            ("Enter/Space", "Reveal"),
-        ]
-        .as_slice(),
+        crate::InputMode::Search => [("Esc", "Clear"), ("Enter/Space", "Reveal")].as_slice(),
     };
     let mut spans = Vec::new();
+    if !app.status.is_empty() {
+        spans.push(Span::styled(
+            app.status.clone(),
+            Style::default().fg(Color::White),
+        ));
+        spans.push(Span::styled("  |  ", Style::default().fg(Color::DarkGray)));
+    }
     for (index, (key, action)) in bindings.iter().enumerate() {
         if index > 0 {
             spans.push(Span::raw("  "));
@@ -392,13 +409,6 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         ));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(*action, Style::default().fg(Color::DarkGray)));
-    }
-    if !app.status.is_empty() {
-        spans.push(Span::styled("  |  ", Style::default().fg(Color::DarkGray)));
-        spans.push(Span::styled(
-            app.status.clone(),
-            Style::default().fg(Color::White),
-        ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -729,6 +739,10 @@ mod tests {
 
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let buffer = terminal.backend().buffer();
+        assert_eq!(buffer.content[0].fg, Color::DarkGray);
+        assert!(app.search_contains(0, 0));
+        assert!(app.search_contains(99, 2));
+        assert!(!app.search_contains(0, 3));
         let rendered = buffer
             .content
             .iter()
@@ -739,7 +753,8 @@ mod tests {
         assert!(rendered.contains("HostName"));
         assert!(rendered.contains("1 host"));
         assert!(!rendered.contains("loaded"));
-        assert!(rendered.contains("[j/k] Move"));
+        assert!(rendered.contains("[Space] Fold"));
+        assert!(!rendered.contains("Move"));
         assert!(rendered.contains("[Enter] Connect"));
         let footer = buffer
             .content
@@ -749,7 +764,7 @@ mod tests {
             .rev()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(footer.find("[j/k] Move") < footer.find("1 host"));
+        assert!(footer.find("1 host") < footer.find("[Space] Fold"));
         assert!(!rendered.contains("(not set)"));
         let header = buffer
             .content
@@ -781,14 +796,23 @@ mod tests {
 
         app.start_search();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer.content[0].fg, Color::Yellow);
+        assert_eq!(
+            buffer
+                .content
+                .iter()
+                .find(|cell| cell.symbol() == ">")
+                .expect("search prompt")
+                .fg,
+            Color::Yellow
+        );
+        let rendered = buffer
             .content
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("[Up/Down] Move"));
+        assert!(!rendered.contains("Move"));
         assert!(rendered.contains("[Enter/Space] Reveal"));
     }
 

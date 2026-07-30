@@ -60,6 +60,10 @@ pub struct App {
     pub visible: Vec<VisibleRow>,
     pub search: String,
     pub input_mode: InputMode,
+    pub search_left: u16,
+    pub search_top: u16,
+    pub search_width: u16,
+    pub search_height: u16,
     pub tree_left: u16,
     pub tree_top: u16,
     pub tree_width: u16,
@@ -88,6 +92,10 @@ impl App {
             visible: Vec::new(),
             search: String::new(),
             input_mode: InputMode::Normal,
+            search_left: 0,
+            search_top: 0,
+            search_width: 0,
+            search_height: 0,
             tree_left: 0,
             tree_top: 0,
             tree_width: 0,
@@ -270,6 +278,20 @@ impl App {
             self.toggle_selected_folder();
         }
         selected
+    }
+
+    pub fn search_contains(&self, terminal_column: u16, terminal_row: u16) -> bool {
+        terminal_column >= self.search_left
+            && terminal_column < self.search_left.saturating_add(self.search_width)
+            && terminal_row >= self.search_top
+            && terminal_row < self.search_top.saturating_add(self.search_height)
+    }
+
+    pub fn set_search_area(&mut self, left: u16, top: u16, width: u16, height: u16) {
+        self.search_left = left;
+        self.search_top = top;
+        self.search_width = width;
+        self.search_height = height;
     }
 
     pub fn set_tree_area(&mut self, left: u16, top: u16, width: u16, height: u16) {

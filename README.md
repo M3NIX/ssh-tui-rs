@@ -62,7 +62,8 @@ Controls:
 - `--no-network-check` disables reachability probes and displays every host as
   reachable.
 - Mouse wheel scrolls selection; left click selects and toggles folders.
-  Double-clicking a host launches its SSH connection.
+  Clicking the search pane enters search mode, and double-clicking a host
+  launches its SSH connection.
 
 Folders start folded. Folder and host entries are sorted alphabetically, and
 selecting a folder shows its descendant hosts in the details pane.

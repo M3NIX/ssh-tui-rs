@@ -124,7 +124,10 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         MouseEventKind::ScrollDown => app.select_next(),
                         MouseEventKind::ScrollUp => app.select_previous(),
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if app.click_at(mouse.column, mouse.row)
+                            if app.search_contains(mouse.column, mouse.row) {
+                                app.start_search();
+                                last_host_click = None;
+                            } else if app.click_at(mouse.column, mouse.row)
                                 && app.selected_host().is_some()
                             {
                                 let node_id = app
