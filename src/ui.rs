@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
-use crate::{App, HostReachability, Node, NodeKind, VisibleRow};
+use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow};
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let root = frame.area();
@@ -32,6 +32,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     render_tree(frame, app, body[0]);
     render_details(frame, app, body[1]);
     render_footer(frame, app, layout[2]);
+    if let Some(failure) = &app.connection_failure {
+        render_connection_failure(frame, failure);
+    }
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -372,6 +375,64 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
+fn render_connection_failure(frame: &mut Frame<'_>, failure: &ConnectionFailure) {
+    let screen = frame.area();
+    if screen.width == 0 || screen.height == 0 {
+        return;
+    }
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            failure.alias.clone(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    lines.extend(
+        failure
+            .message
+            .lines()
+            .map(|line| Line::from(Span::styled(line.to_string(), Color::White))),
+    );
+    lines.push(Line::from(""));
+    if let Some(exit_status) = failure.exit_status {
+        lines.push(field_line("Exit status", &exit_status.to_string()));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Enter or Esc to close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let width = screen.width.saturating_sub(2).clamp(1, 76);
+    let available_height = screen.height.saturating_sub(2).max(1);
+    let height = section_height(&lines, width).min(available_height);
+    let area = Rect::new(
+        screen.x + screen.width.saturating_sub(width) / 2,
+        screen.y + screen.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Red))
+                    .title(Span::styled(
+                        " Connection failed ",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    )),
+            )
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn field_line(label: &str, value: &str) -> Line<'static> {
     field_line_with_spans(
         label,
@@ -692,6 +753,38 @@ mod tests {
             .count();
 
         assert_eq!(red_dots, 2);
+    }
+
+    #[test]
+    fn draws_connection_failure_dialog() {
+        let config = crate::SshConfig {
+            source: "config".into(),
+            groups: Vec::new(),
+            hosts: Vec::new(),
+        };
+        let mut app = App::new(config);
+        app.show_connection_failure(ConnectionFailure {
+            alias: "test-web".into(),
+            message: "ssh: Could not resolve hostname test1 because the configured DNS name is intentionally long enough to wrap across terminal rows".into(),
+            exit_status: Some(255),
+        });
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("Connection failed"));
+        assert!(rendered.contains("test-web"));
+        assert!(rendered.contains("Could not resolve hostname"));
+        assert!(rendered.contains("255"));
+        assert!(rendered.contains("Enter or Esc to close"));
     }
 
     #[test]

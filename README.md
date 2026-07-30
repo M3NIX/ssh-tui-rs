@@ -62,6 +62,10 @@ Controls:
 Folders start folded. Folder and host entries are sorted alphabetically, and
 selecting a folder shows its descendant hosts in the details pane.
 
+When an SSH session exits, the TUI is restored automatically. Failed sessions
+show the captured SSH error in a dialog; press `Enter` or `Esc`, or click, to
+close it.
+
 Host dots are gray until their folder is unfolded, yellow while a background
 TCP check is running, green when the configured `HostName` and `Port` are
 reachable, and red otherwise. Checks use a five-second timeout and port `22`

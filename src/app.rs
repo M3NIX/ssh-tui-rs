@@ -20,6 +20,13 @@ pub enum InputMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionFailure {
+    pub alias: String,
+    pub message: String,
+    pub exit_status: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
     Root,
     Folder,
@@ -59,6 +66,7 @@ pub struct App {
     pub visible_offset: usize,
     pub status: String,
     pub reachability: HashMap<usize, HostReachability>,
+    pub connection_failure: Option<ConnectionFailure>,
     reachability_updates: Vec<mpsc::Receiver<CheckResult>>,
 }
 
@@ -79,6 +87,7 @@ impl App {
             visible_offset: 0,
             status: String::new(),
             reachability: HashMap::new(),
+            connection_failure: None,
             reachability_updates: Vec::new(),
         };
         app.rebuild_visible();
@@ -225,6 +234,14 @@ impl App {
 
     pub fn set_status(&mut self, status: String) {
         self.status = status;
+    }
+
+    pub fn show_connection_failure(&mut self, failure: ConnectionFailure) {
+        self.connection_failure = Some(failure);
+    }
+
+    pub fn dismiss_connection_failure(&mut self) {
+        self.connection_failure = None;
     }
 
     pub fn poll_reachability(&mut self) {
