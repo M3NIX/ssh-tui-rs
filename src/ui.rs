@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
-use crate::{App, Node, NodeKind, VisibleRow};
+use crate::{App, HostReachability, Node, NodeKind, VisibleRow};
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let root = frame.area();
@@ -102,9 +103,9 @@ fn render_tree_row(app: &App, row: &VisibleRow, selected: bool) -> Line<'static>
                     .add_modifier(Modifier::BOLD),
             )
         }
-        NodeKind::Host(_) => (
+        NodeKind::Host(host_index) => (
             "● ",
-            Style::default().fg(Color::Green),
+            Style::default().fg(reachability_color(app.host_reachability(host_index))),
             Style::default().fg(Color::White),
         ),
     };
@@ -129,19 +130,23 @@ fn highlighted_name(
     selected: bool,
     base: Style,
 ) -> Vec<Span<'static>> {
-    let matched = matched.iter().copied().collect::<HashSet<_>>();
-    let mut spans = Vec::new();
     let base = if selected {
         base.add_modifier(Modifier::BOLD)
     } else {
         base
     };
+    highlighted_chars(name, matched, base)
+}
+
+fn highlighted_chars(value: &str, matched: &[usize], base: Style) -> Vec<Span<'static>> {
+    let matched = matched.iter().copied().collect::<HashSet<_>>();
+    let mut spans = Vec::new();
     let highlight = Style::default()
         .fg(Color::Black)
         .bg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
 
-    for (index, character) in name.chars().enumerate() {
+    for (index, character) in value.chars().enumerate() {
         let style = if matched.contains(&index) {
             highlight
         } else {
@@ -164,9 +169,13 @@ fn render_details(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     match node.kind {
         NodeKind::Root | NodeKind::Folder => render_folder_details(frame, app, node, area),
-        NodeKind::Host(host_index) => {
-            render_host_details(frame, &app.config.hosts[host_index], area)
-        }
+        NodeKind::Host(host_index) => render_host_details(
+            frame,
+            &app.config.hosts[host_index],
+            app.host_reachability(host_index),
+            &app.search,
+            area,
+        ),
     }
 }
 
@@ -174,16 +183,21 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
     let path = node_path(app, node.id);
     let (folders, hosts) = count_descendants(app, node.id);
     let mut overview = vec![
-        Line::from(Span::styled(
-            node.name.clone(),
+        Line::from(fuzzy_highlighted(
+            &node.name,
+            &app.search,
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
-        field_line("Path", if path.is_empty() { "/" } else { &path }),
+        search_field_line(
+            "Path",
+            if path.is_empty() { "/" } else { &path },
+            &app.search,
+        ),
     ];
     if let Some(description) = &node.description {
-        overview.push(field_line("Description", description));
+        overview.push(search_field_line("Description", description, &app.search));
     }
     if folders > 0 {
         overview.push(field_line("Subfolders", &folders.to_string()));
@@ -204,8 +218,14 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
 
     let items = descendant_hosts(app, node.id)
         .into_iter()
-        .map(|host| folder_host_line(host, &node_path_parts(app, node.id)))
-        .map(ListItem::new)
+        .map(|(host_index, host)| {
+            folder_host_item(
+                host,
+                app.host_reachability(host_index),
+                &node_path_parts(app, node.id),
+                app.search.trim(),
+            )
+        })
         .collect::<Vec<_>>();
     frame.render_widget(
         List::new(items).block(
@@ -217,21 +237,34 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
     );
 }
 
-fn render_host_details(frame: &mut Frame<'_>, host: &crate::HostEntry, area: Rect) {
-    let mut overview = vec![Line::from(Span::styled(
-        host.alias.clone(),
+fn render_host_details(
+    frame: &mut Frame<'_>,
+    host: &crate::HostEntry,
+    reachability: HostReachability,
+    query: &str,
+    area: Rect,
+) {
+    let mut title = vec![host_dot(reachability)];
+    title.extend(fuzzy_highlighted(
+        &host.alias,
+        query,
         Style::default()
-            .fg(Color::Green)
+            .fg(Color::White)
             .add_modifier(Modifier::BOLD),
-    ))];
+    ));
+    let mut overview = vec![Line::from(title)];
     if !host.group_path.is_empty() {
-        overview.push(field_line("Group", &host.group_path.join("/")));
+        overview.push(search_field_line(
+            "Group",
+            &host.group_path.join("/"),
+            query,
+        ));
     }
     if let Some(description) = &host.description {
-        overview.push(field_line("Description", description));
+        overview.push(search_field_line("Description", description, query));
     }
 
-    let connection = connection_lines(host);
+    let connection = connection_lines(host, query);
     let configuration = configuration_lines(host);
     let mut constraints = vec![Constraint::Length(section_height(&overview, area.width))];
     if !connection.is_empty() {
@@ -274,11 +307,11 @@ fn render_host_details(frame: &mut Frame<'_>, host: &crate::HostEntry, area: Rec
     );
 }
 
-fn connection_lines(host: &crate::HostEntry) -> Vec<Line<'static>> {
+fn connection_lines(host: &crate::HostEntry, query: &str) -> Vec<Line<'static>> {
     let resolved = &host.resolved;
     let mut lines = Vec::new();
     if let Some(host_name) = &resolved.host_name {
-        lines.push(field_line("HostName", host_name));
+        lines.push(search_field_line("HostName", host_name, query));
     }
     if let Some(user) = &resolved.user {
         lines.push(field_line("User", user));
@@ -340,15 +373,46 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn field_line(label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("{label:<12}"),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(value.to_string(), Style::default().fg(Color::White)),
-    ])
+    field_line_with_spans(
+        label,
+        vec![Span::styled(
+            value.to_string(),
+            Style::default().fg(Color::White),
+        )],
+    )
+}
+
+fn search_field_line(label: &str, value: &str, query: &str) -> Line<'static> {
+    field_line_with_spans(
+        label,
+        fuzzy_highlighted(value, query, Style::default().fg(Color::White)),
+    )
+}
+
+fn field_line_with_spans(label: &str, value: Vec<Span<'static>>) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        format!("{label:<12}"),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )];
+    spans.extend(value);
+    Line::from(spans)
+}
+
+fn fuzzy_highlighted(value: &str, query: &str, base: Style) -> Vec<Span<'static>> {
+    let matched = fuzzy_indices(value, query).unwrap_or_default();
+    highlighted_chars(value, &matched, base)
+}
+
+fn fuzzy_indices(value: &str, query: &str) -> Option<Vec<usize>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    SkimMatcherV2::default()
+        .fuzzy_indices(value, query)
+        .map(|(_, indices)| indices)
 }
 
 fn section_height(lines: &[Line<'_>], width: u16) -> u16 {
@@ -360,12 +424,14 @@ fn section_height(lines: &[Line<'_>], width: u16) -> u16 {
     u16::try_from(content_height.saturating_add(2)).unwrap_or(u16::MAX)
 }
 
-fn descendant_hosts(app: &App, node_id: usize) -> Vec<&crate::HostEntry> {
-    fn collect<'a>(app: &'a App, node_id: usize, hosts: &mut Vec<&'a crate::HostEntry>) {
+fn descendant_hosts(app: &App, node_id: usize) -> Vec<(usize, &crate::HostEntry)> {
+    fn collect<'a>(app: &'a App, node_id: usize, hosts: &mut Vec<(usize, &'a crate::HostEntry)>) {
         for child in &app.nodes[node_id].children {
             match app.nodes[*child].kind {
                 NodeKind::Folder | NodeKind::Root => collect(app, *child, hosts),
-                NodeKind::Host(host_index) => hosts.push(&app.config.hosts[host_index]),
+                NodeKind::Host(host_index) => {
+                    hosts.push((host_index, &app.config.hosts[host_index]));
+                }
             }
         }
     }
@@ -373,41 +439,95 @@ fn descendant_hosts(app: &App, node_id: usize) -> Vec<&crate::HostEntry> {
     let mut hosts = Vec::new();
     collect(app, node_id, &mut hosts);
     hosts.sort_by(|left, right| {
-        left.alias
+        left.1
+            .alias
             .to_lowercase()
-            .cmp(&right.alias.to_lowercase())
-            .then_with(|| left.alias.cmp(&right.alias))
+            .cmp(&right.1.alias.to_lowercase())
+            .then_with(|| left.1.alias.cmp(&right.1.alias))
     });
     hosts
 }
 
-fn folder_host_line(host: &crate::HostEntry, selected_path: &[String]) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled("● ", Style::default().fg(Color::Green)),
-        Span::styled(
-            host.alias.clone(),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
+fn folder_host_item(
+    host: &crate::HostEntry,
+    reachability: HostReachability,
+    selected_path: &[String],
+    query: &str,
+) -> ListItem<'static> {
+    let mut spans = vec![host_dot(reachability)];
+    spans.extend(fuzzy_highlighted(
+        &host.alias,
+        query,
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    ));
     let relative_group = host
         .group_path
         .strip_prefix(selected_path)
         .unwrap_or(&host.group_path);
     if !relative_group.is_empty() {
-        spans.push(Span::styled(
-            format!("  {}", relative_group.join("/")),
+        spans.push(Span::raw("  "));
+        spans.extend(fuzzy_highlighted(
+            &relative_group.join("/"),
+            query,
             Style::default().fg(Color::Cyan),
         ));
     }
     if let Some(host_name) = &host.resolved.host_name {
-        spans.push(Span::styled(
-            format!("  {host_name}"),
+        spans.push(Span::raw("  "));
+        spans.extend(fuzzy_highlighted(
+            host_name,
+            query,
             Style::default().fg(Color::DarkGray),
         ));
     }
-    Line::from(spans)
+
+    let mut lines = vec![Line::from(spans)];
+    if let Some(description) = host
+        .description
+        .as_deref()
+        .filter(|description| fuzzy_indices(description, query).is_some())
+    {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "Description ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines
+            .last_mut()
+            .expect("description line exists")
+            .spans
+            .extend(fuzzy_highlighted(
+                description,
+                query,
+                Style::default().fg(Color::White),
+            ));
+    }
+
+    ListItem::new(lines)
+}
+
+fn host_dot(reachability: HostReachability) -> Span<'static> {
+    Span::styled(
+        "● ",
+        Style::default()
+            .fg(reachability_color(reachability))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn reachability_color(reachability: HostReachability) -> Color {
+    match reachability {
+        HostReachability::Unchecked => Color::DarkGray,
+        HostReachability::Checking => Color::Yellow,
+        HostReachability::Reachable => Color::Green,
+        HostReachability::Unreachable => Color::Red,
+    }
 }
 
 fn node_path(app: &App, node_id: usize) -> String {
@@ -450,11 +570,20 @@ fn count_descendants(app: &App, node_id: usize) -> (usize, usize) {
 mod tests {
     use std::{collections::BTreeMap, path::PathBuf};
 
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     use crate::{GroupEntry, ResolvedHost, ssh_config::HostEntry};
 
     use super::*;
+
+    fn highlighted_text(buffer: &Buffer) -> String {
+        buffer
+            .content
+            .iter()
+            .filter(|cell| cell.bg == Color::Yellow)
+            .map(|cell| cell.symbol())
+            .collect()
+    }
 
     #[test]
     fn draws_without_panicking() {
@@ -492,6 +621,77 @@ mod tests {
         assert!(rendered.contains("bastion"));
         assert!(rendered.contains("HostName"));
         assert!(!rendered.contains("(not set)"));
+        let unchecked_dots = buffer
+            .content
+            .iter()
+            .filter(|cell| cell.symbol() == "●" && cell.fg == Color::DarkGray)
+            .count();
+        assert_eq!(unchecked_dots, 2);
+    }
+
+    #[test]
+    fn highlights_description_and_hostname_matches_in_host_details() {
+        let config = crate::SshConfig {
+            source: "config".into(),
+            groups: Vec::new(),
+            hosts: vec![HostEntry {
+                alias: "bastion".into(),
+                description: Some("Primary entry point".into()),
+                group_path: Vec::new(),
+                source: "config".into(),
+                line: 1,
+                options: Default::default(),
+                resolved: ResolvedHost {
+                    host_name: Some("gateway.internal.test".into()),
+                    ..ResolvedHost::default()
+                },
+            }],
+        };
+        let mut app = App::new(config);
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        app.search = "primary".into();
+        app.rebuild_visible();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert!(highlighted_text(terminal.backend().buffer()).contains("Primary"));
+
+        app.search = "internal".into();
+        app.rebuild_visible();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert!(highlighted_text(terminal.backend().buffer()).contains("internal"));
+    }
+
+    #[test]
+    fn unreachable_hosts_use_red_dots() {
+        let config = crate::SshConfig {
+            source: "config".into(),
+            groups: Vec::new(),
+            hosts: vec![HostEntry {
+                alias: "offline".into(),
+                description: None,
+                group_path: Vec::new(),
+                source: "config".into(),
+                line: 1,
+                options: Default::default(),
+                resolved: ResolvedHost::default(),
+            }],
+        };
+        let mut app = App::new(config);
+        app.reachability.insert(0, HostReachability::Unreachable);
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let red_dots = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .filter(|cell| cell.symbol() == "●" && cell.fg == Color::Red)
+            .count();
+
+        assert_eq!(red_dots, 2);
     }
 
     #[test]
@@ -507,7 +707,7 @@ mod tests {
             hosts: vec![
                 HostEntry {
                     alias: "zeta-db".into(),
-                    description: None,
+                    description: Some("Primary database".into()),
                     group_path: vec!["Production".into(), "Databases".into()],
                     source: PathBuf::from("config"),
                     line: 3,
@@ -543,5 +743,17 @@ mod tests {
         assert!(rendered.contains("alpha-api"));
         assert!(rendered.contains("zeta-db"));
         assert!(rendered.find("alpha-api") < rendered.find("zeta-db"));
+
+        app.search = "primary".into();
+        app.rebuild_visible();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Description Primary database"));
+        assert!(highlighted_text(buffer).contains("Primary"));
     }
 }

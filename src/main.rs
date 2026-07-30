@@ -61,6 +61,7 @@ fn run_loop(
     browse_only: bool,
 ) -> Result<()> {
     loop {
+        app.poll_reachability();
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         if event::poll(Duration::from_millis(250))? {

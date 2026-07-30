@@ -1,8 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::mpsc,
+    time::Duration,
+};
 
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 
-use crate::{GroupEntry, HostEntry, SshConfig};
+use crate::{
+    GroupEntry, HostEntry, HostReachability, SshConfig,
+    reachability::{CheckResult, CheckTarget, spawn_checks},
+};
+
+const REACHABILITY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
@@ -49,6 +58,8 @@ pub struct App {
     pub tree_height: u16,
     pub visible_offset: usize,
     pub status: String,
+    pub reachability: HashMap<usize, HostReachability>,
+    reachability_updates: Vec<mpsc::Receiver<CheckResult>>,
 }
 
 impl App {
@@ -67,6 +78,8 @@ impl App {
             tree_height: 0,
             visible_offset: 0,
             status: String::new(),
+            reachability: HashMap::new(),
+            reachability_updates: Vec::new(),
         };
         app.rebuild_visible();
         app.status = format!("{} hosts loaded", app.config.hosts.len());
@@ -120,6 +133,8 @@ impl App {
         }
         if !self.expanded.insert(node_id) {
             self.expanded.remove(&node_id);
+        } else {
+            self.check_hosts_below(node_id);
         }
         self.rebuild_visible();
     }
@@ -143,7 +158,9 @@ impl App {
             return;
         };
         if matches!(self.nodes[node_id].kind, NodeKind::Folder | NodeKind::Root) {
-            self.expanded.insert(node_id);
+            if self.expanded.insert(node_id) {
+                self.check_hosts_below(node_id);
+            }
             self.rebuild_visible();
         }
     }
@@ -198,8 +215,73 @@ impl App {
         self.status = status;
     }
 
+    pub fn poll_reachability(&mut self) {
+        let mut active = Vec::new();
+        for updates in self.reachability_updates.drain(..) {
+            loop {
+                match updates.try_recv() {
+                    Ok(result) => {
+                        self.reachability
+                            .insert(result.host_index, result.reachability);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        active.push(updates);
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+        self.reachability_updates = active;
+    }
+
+    pub fn host_reachability(&self, host_index: usize) -> HostReachability {
+        self.reachability
+            .get(&host_index)
+            .copied()
+            .unwrap_or(HostReachability::Unchecked)
+    }
+
     pub fn display_name<'a>(&'a self, node: &'a Node) -> &'a str {
         &node.name
+    }
+
+    fn check_hosts_below(&mut self, node_id: usize) {
+        let mut host_indices = Vec::new();
+        self.collect_host_indices(node_id, &mut host_indices);
+        let mut targets = Vec::new();
+        for host_index in host_indices {
+            if self.host_reachability(host_index) == HostReachability::Checking {
+                continue;
+            }
+            self.reachability
+                .insert(host_index, HostReachability::Checking);
+            let host = &self.config.hosts[host_index];
+            targets.push(CheckTarget {
+                host_index,
+                host: host
+                    .resolved
+                    .host_name
+                    .clone()
+                    .unwrap_or_else(|| host.alias.clone()),
+                port: host.resolved.port.unwrap_or(22),
+            });
+        }
+        if !targets.is_empty() {
+            self.reachability_updates
+                .push(spawn_checks(targets, REACHABILITY_TIMEOUT));
+        }
+    }
+
+    fn collect_host_indices(&self, node_id: usize, host_indices: &mut Vec<usize>) {
+        for child in &self.nodes[node_id].children {
+            match self.nodes[*child].kind {
+                NodeKind::Root | NodeKind::Folder => {
+                    self.collect_host_indices(*child, host_indices);
+                }
+                NodeKind::Host(host_index) => host_indices.push(host_index),
+            }
+        }
     }
 
     fn select_node(&mut self, node_id: usize) {
@@ -494,6 +576,7 @@ mod tests {
             .map(|row| app.nodes[row.node_id].name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
+        assert_eq!(app.host_reachability(0), HostReachability::Unchecked);
     }
 
     #[test]
@@ -513,16 +596,28 @@ mod tests {
                 source: PathBuf::from("config"),
                 line: 2,
                 options: BTreeMap::new(),
-                resolved: ResolvedHost::default(),
+                resolved: ResolvedHost {
+                    host_name: Some("127.0.0.1".into()),
+                    port: Some(0),
+                    ..ResolvedHost::default()
+                },
             }],
         };
 
         let mut app = App::new(config);
+        assert_eq!(app.host_reachability(0), HostReachability::Unchecked);
         app.set_tree_area(2, 10);
         app.click_at(2);
 
         assert!(app.expanded.contains(&app.visible[0].node_id));
         assert_eq!(app.visible.len(), 2);
+        assert_eq!(app.host_reachability(0), HostReachability::Checking);
+
+        app.reachability.insert(0, HostReachability::Reachable);
+        app.click_at(2);
+        assert_eq!(app.host_reachability(0), HostReachability::Reachable);
+        app.click_at(2);
+        assert_eq!(app.host_reachability(0), HostReachability::Checking);
     }
 
     #[test]

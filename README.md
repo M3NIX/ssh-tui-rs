@@ -52,6 +52,12 @@ Controls:
 Folders start folded. Folder and host entries are sorted alphabetically, and
 selecting a folder shows its descendant hosts in the details pane.
 
+Host dots are gray until their folder is unfolded, yellow while a background
+TCP check is running, green when the configured `HostName` and `Port` are
+reachable, and red otherwise. Checks use a five-second timeout and port `22`
+when `Port` is not set. Folding and unfolding a folder refreshes its descendant
+hosts.
+
 ## Release Artifacts
 
 Pushing a tag matching `v*` or `release-*` runs the GitHub Actions workflow in
