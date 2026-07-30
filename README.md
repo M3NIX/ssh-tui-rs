@@ -30,8 +30,10 @@ Supported comments:
 - `# @description text`
 - `# description: text`
 
-A group applies to every following host, including hosts from `Include` files,
-until another group/folder comment is found. Folder paths use `/` for nesting.
+A group applies to every following host in the same physical file until another
+group/folder comment is found. Each included file starts ungrouped, so metadata
+from one `config.d/*.conf` file cannot leak into the next. Folder paths use `/`
+for nesting.
 
 ## Usage
 

@@ -57,8 +57,6 @@ struct ActiveGroup {
 struct Scan {
     hosts: Vec<ScannedHost>,
     groups: BTreeMap<Vec<String>, GroupEntry>,
-    active_group: Option<ActiveGroup>,
-    pending_host: PendingHostMeta,
     visited: HashSet<PathBuf>,
 }
 
@@ -162,6 +160,8 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
     let mut current_hosts: Vec<usize> = Vec::new();
+    let mut active_group: Option<ActiveGroup> = None;
+    let mut pending_host = PendingHostMeta::default();
 
     for (index, line) in reader.lines().enumerate() {
         let line_number = index + 1;
@@ -169,14 +169,21 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
         let trimmed = line.trim();
 
         if let Some(comment) = trimmed.strip_prefix('#') {
-            apply_comment_metadata(comment.trim(), scan, &path, line_number);
+            apply_comment_metadata(
+                comment.trim(),
+                scan,
+                &mut active_group,
+                &mut pending_host,
+                &path,
+                line_number,
+            );
             continue;
         }
 
         let Some((keyword, values)) = parse_directive(trimmed) else {
             if !trimmed.is_empty() {
                 current_hosts.clear();
-                scan.pending_host = PendingHostMeta::default();
+                pending_host = PendingHostMeta::default();
             }
             continue;
         };
@@ -186,7 +193,7 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
                 scan_file(&include, scan)?;
             }
             current_hosts.clear();
-            scan.pending_host = PendingHostMeta::default();
+            pending_host = PendingHostMeta::default();
             continue;
         }
 
@@ -199,16 +206,15 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
                 .collect::<Vec<_>>();
 
             if aliases.is_empty() {
-                scan.pending_host = PendingHostMeta::default();
+                pending_host = PendingHostMeta::default();
                 continue;
             }
 
             for alias in aliases {
                 let host = ScannedHost {
                     alias,
-                    description: scan.pending_host.description.clone(),
-                    group_path: scan
-                        .active_group
+                    description: pending_host.description.clone(),
+                    group_path: active_group
                         .as_ref()
                         .map(|group| group.path.clone())
                         .unwrap_or_default(),
@@ -219,7 +225,7 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
                 scan.hosts.push(host);
                 current_hosts.push(scan.hosts.len() - 1);
             }
-            scan.pending_host = PendingHostMeta::default();
+            pending_host = PendingHostMeta::default();
             continue;
         }
 
@@ -239,7 +245,14 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
     Ok(())
 }
 
-fn apply_comment_metadata(comment: &str, scan: &mut Scan, source: &Path, line: usize) {
+fn apply_comment_metadata(
+    comment: &str,
+    scan: &mut Scan,
+    active_group: &mut Option<ActiveGroup>,
+    pending_host: &mut PendingHostMeta,
+    source: &Path,
+    line: usize,
+) {
     let Some((key, value)) = parse_metadata(comment) else {
         return;
     };
@@ -251,7 +264,7 @@ fn apply_comment_metadata(comment: &str, scan: &mut Scan, source: &Path, line: u
             if path.is_empty() {
                 return;
             }
-            scan.active_group = Some(ActiveGroup { path: path.clone() });
+            *active_group = Some(ActiveGroup { path: path.clone() });
             scan.groups.insert(
                 path.clone(),
                 GroupEntry {
@@ -263,7 +276,7 @@ fn apply_comment_metadata(comment: &str, scan: &mut Scan, source: &Path, line: u
             );
         }
         "description" | "desc" | "host-description" | "host_description" => {
-            scan.pending_host.description = Some(value.trim().to_string());
+            pending_host.description = Some(value.trim().to_string());
         }
         _ => {}
     }
@@ -437,7 +450,7 @@ Host prod-api
     }
 
     #[test]
-    fn includes_inherit_active_group_until_new_group() {
+    fn include_files_have_independent_group_state() {
         let dir = tempdir().unwrap();
         let included = dir.path().join("included.conf");
         let config = dir.path().join("config");
@@ -481,9 +494,55 @@ Host after-include
             .find(|host| host.alias == "after-include")
             .unwrap();
 
-        assert_eq!(app.group_path, vec!["Work", "Apps"]);
+        assert!(app.group_path.is_empty());
         assert_eq!(other.group_path, vec!["Other"]);
-        assert_eq!(after.group_path, vec!["Other"]);
+        assert_eq!(after.group_path, vec!["Work", "Apps"]);
+    }
+
+    #[test]
+    fn globbed_file_without_group_stays_ungrouped() {
+        let dir = tempdir().unwrap();
+        let config_dir = dir.path().join("config.d");
+        fs::create_dir(&config_dir).unwrap();
+        fs::write(
+            config_dir.join("grouped.conf"),
+            r#"
+# @group Work
+Host work
+  HostName work.internal
+"#,
+        )
+        .unwrap();
+        fs::write(
+            config_dir.join("ungrouped.conf"),
+            r#"
+Host arch
+  HostName localhost
+  User m3nix
+"#,
+        )
+        .unwrap();
+        let config = dir.path().join("config");
+        fs::write(
+            &config,
+            format!("Include {}/*.conf\n", config_dir.display()),
+        )
+        .unwrap();
+
+        let parsed = SshConfig::load(Some(&config)).unwrap();
+        let work = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "work")
+            .unwrap();
+        let arch = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "arch")
+            .unwrap();
+
+        assert_eq!(work.group_path, ["Work"]);
+        assert!(arch.group_path.is_empty());
     }
 
     #[test]
