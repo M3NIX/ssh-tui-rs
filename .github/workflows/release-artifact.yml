@@ -1,0 +1,48 @@
+name: Release Artifact
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "release-*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: Build Linux binary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --locked --release
+
+      - name: Prepare artifact
+        run: |
+          install -Dm755 target/release/ssh-tui dist/ssh-tui-linux-x86_64
+          tar -C dist -czf ssh-tui-linux-x86_64.tar.gz ssh-tui-linux-x86_64
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-tui-linux-x86_64
+          path: ssh-tui-linux-x86_64.tar.gz
+          if-no-files-found: error
