@@ -11,6 +11,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow};
 
+const HOST_DOT: &str = "● ";
+const HOST_TABLE_COLUMN_SPACING: u16 = 2;
+
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let root = frame.area();
     let layout = Layout::default()
@@ -102,7 +105,7 @@ fn render_tree_row(app: &App, row: &VisibleRow, selected: bool) -> Line<'static>
             )
         }
         NodeKind::Host(host_index) => (
-            "● ",
+            HOST_DOT,
             Style::default().fg(reachability_color(app.host_reachability(host_index))),
             Style::default().fg(Color::White),
         ),
@@ -230,7 +233,7 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
                         .add_modifier(Modifier::BOLD),
                 ),
             )
-            .column_spacing(1)
+            .column_spacing(HOST_TABLE_COLUMN_SPACING)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -522,7 +525,7 @@ fn folder_column_widths(
     selected_path: &[String],
     area_width: u16,
 ) -> [Constraint; 3] {
-    let available = area_width.saturating_sub(4);
+    let available = area_width.saturating_sub(2 + HOST_TABLE_COLUMN_SPACING.saturating_mul(2));
     let natural_alias_width = hosts
         .iter()
         .map(|(_, host)| folder_alias(host, selected_path).width())
@@ -603,7 +606,7 @@ fn folder_alias(host: &crate::HostEntry, selected_path: &[String]) -> String {
 
 fn host_dot(reachability: HostReachability) -> Span<'static> {
     Span::styled(
-        "● ",
+        HOST_DOT,
         Style::default()
             .fg(reachability_color(reachability))
             .add_modifier(Modifier::BOLD),
@@ -720,9 +723,17 @@ mod tests {
         let checking_dots = buffer
             .content
             .iter()
-            .filter(|cell| cell.symbol() == "●" && cell.fg == Color::Yellow)
-            .count();
-        assert_eq!(checking_dots, 2);
+            .enumerate()
+            .filter_map(|(index, cell)| {
+                (cell.symbol() == "●" && cell.fg == Color::Yellow).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(checking_dots.len(), 2);
+        assert!(
+            checking_dots
+                .iter()
+                .all(|index| buffer.content[index + 1].symbol() == " ")
+        );
     }
 
     #[test]
