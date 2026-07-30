@@ -533,29 +533,14 @@ fn folder_host_item(
     }
 
     let mut lines = vec![Line::from(spans)];
-    if let Some(description) = host
-        .description
-        .as_deref()
-        .filter(|description| fuzzy_indices(description, query).is_some())
-    {
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                "Description ",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        lines
-            .last_mut()
-            .expect("description line exists")
-            .spans
-            .extend(fuzzy_highlighted(
-                description,
-                query,
-                Style::default().fg(Color::White),
-            ));
+    if let Some(description) = &host.description {
+        let mut description_spans = vec![Span::raw("  ")];
+        description_spans.extend(fuzzy_highlighted(
+            description,
+            query,
+            Style::default().fg(Color::DarkGray),
+        ));
+        lines.push(Line::from(description_spans));
     }
 
     ListItem::new(lines)
@@ -831,6 +816,7 @@ mod tests {
         assert!(rendered.contains("Hosts (2)"));
         assert!(rendered.contains("alpha-api"));
         assert!(rendered.contains("zeta-db"));
+        assert!(rendered.contains("Primary database"));
         assert!(rendered.find("alpha-api") < rendered.find("zeta-db"));
 
         app.search = "primary".into();
@@ -842,7 +828,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("Description Primary database"));
+        assert!(rendered.contains("Primary database"));
         assert!(highlighted_text(buffer).contains("Primary"));
     }
 }
