@@ -3,10 +3,11 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result};
-use glob::glob;
+use glob::{Pattern, glob};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshConfig {
@@ -59,7 +60,15 @@ struct ActiveGroup {
 struct Scan {
     hosts: Vec<ScannedHost>,
     groups: BTreeMap<Vec<String>, GroupEntry>,
+    host_rules: Vec<HostRule>,
+    global_options: BTreeMap<String, Vec<String>>,
     visited: HashSet<PathBuf>,
+}
+
+#[derive(Debug)]
+struct HostRule {
+    patterns: Vec<String>,
+    options: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -69,7 +78,6 @@ struct ScannedHost {
     group_path: Vec<String>,
     source: PathBuf,
     line: usize,
-    options: BTreeMap<String, Vec<String>>,
 }
 
 impl SshConfig {
@@ -87,14 +95,20 @@ impl SshConfig {
             .hosts
             .into_iter()
             .map(|host| {
-                let resolved = resolve_host(&host.options);
+                let options = resolve_effective_options(
+                    &source,
+                    &host.alias,
+                    &scan.global_options,
+                    &scan.host_rules,
+                );
+                let resolved = resolve_host(&options);
                 HostEntry {
                     alias: host.alias,
                     description: host.description,
                     group_path: host.group_path,
                     source: host.source,
                     line: host.line,
-                    options: host.options,
+                    options,
                     resolved,
                 }
             })
@@ -148,6 +162,91 @@ fn option_values(options: &BTreeMap<String, Vec<String>>, key: &str) -> Vec<Stri
         .collect()
 }
 
+fn resolve_effective_options(
+    source: &Path,
+    alias: &str,
+    global_options: &BTreeMap<String, Vec<String>>,
+    host_rules: &[HostRule],
+) -> BTreeMap<String, Vec<String>> {
+    let mut applicable = BTreeMap::<String, (String, Vec<String>)>::new();
+    collect_applicable_options(&mut applicable, global_options);
+    for rule in host_rules
+        .iter()
+        .filter(|rule| host_patterns_match(&rule.patterns, alias))
+    {
+        collect_applicable_options(&mut applicable, &rule.options);
+    }
+
+    let evaluated = evaluate_with_openssh(source, alias);
+    applicable
+        .into_values()
+        .map(|(display_key, fallback)| {
+            let values = evaluated
+                .as_ref()
+                .and_then(|options| options.get(&display_key.to_ascii_lowercase()))
+                .cloned()
+                .unwrap_or(fallback);
+            (display_key, values)
+        })
+        .collect()
+}
+
+fn collect_applicable_options(
+    applicable: &mut BTreeMap<String, (String, Vec<String>)>,
+    options: &BTreeMap<String, Vec<String>>,
+) {
+    for (key, values) in options {
+        applicable
+            .entry(key.to_ascii_lowercase())
+            .or_insert_with(|| (key.clone(), values.clone()));
+    }
+}
+
+fn host_patterns_match(patterns: &[String], alias: &str) -> bool {
+    let alias = alias.to_ascii_lowercase();
+    let mut positive_match = false;
+
+    for raw_pattern in patterns {
+        let (negated, pattern) = raw_pattern
+            .strip_prefix('!')
+            .map_or((false, raw_pattern.as_str()), |pattern| (true, pattern));
+        let pattern = pattern.to_ascii_lowercase();
+        let matches = Pattern::new(&pattern)
+            .map(|pattern| pattern.matches(&alias))
+            .unwrap_or_else(|_| pattern == alias);
+        if negated && matches {
+            return false;
+        }
+        positive_match |= !negated && matches;
+    }
+    positive_match
+}
+
+fn evaluate_with_openssh(source: &Path, alias: &str) -> Option<BTreeMap<String, Vec<String>>> {
+    let output = Command::new("ssh")
+        .args(["-G", "-F"])
+        .arg(source)
+        .arg("--")
+        .arg(alias)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let mut options = BTreeMap::<String, Vec<String>>::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        options
+            .entry(key.to_ascii_lowercase())
+            .or_default()
+            .push(value.trim().to_string());
+    }
+    Some(options)
+}
+
 fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
     let path = expand_path(path);
     if !path.exists() {
@@ -161,7 +260,7 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
 
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
-    let mut current_hosts: Vec<usize> = Vec::new();
+    let mut current_rule: Option<usize> = None;
     let mut active_group: Option<ActiveGroup> = None;
     let mut pending_host = PendingHostMeta::default();
 
@@ -184,7 +283,6 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
 
         let Some((keyword, values)) = parse_directive(trimmed) else {
             if !trimmed.is_empty() {
-                current_hosts.clear();
                 pending_host = PendingHostMeta::default();
             }
             continue;
@@ -194,13 +292,18 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
             for include in resolve_includes(&values) {
                 scan_file(&include, scan)?;
             }
-            current_hosts.clear();
+            current_rule = None;
             pending_host = PendingHostMeta::default();
             continue;
         }
 
         if keyword.eq_ignore_ascii_case("host") {
-            current_hosts.clear();
+            let rule_id = scan.host_rules.len();
+            scan.host_rules.push(HostRule {
+                patterns: values.clone(),
+                options: BTreeMap::new(),
+            });
+            current_rule = Some(rule_id);
             if pending_host.hidden {
                 pending_host = PendingHostMeta::default();
                 continue;
@@ -226,22 +329,26 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
                         .unwrap_or_default(),
                     source: path.clone(),
                     line: line_number,
-                    options: BTreeMap::new(),
                 };
                 scan.hosts.push(host);
-                current_hosts.push(scan.hosts.len() - 1);
             }
             pending_host = PendingHostMeta::default();
             continue;
         }
 
-        if current_hosts.is_empty() || keyword.eq_ignore_ascii_case("match") {
+        if keyword.eq_ignore_ascii_case("match") {
+            current_rule = None;
             continue;
         }
 
-        for host_index in &current_hosts {
-            scan.hosts[*host_index]
+        if let Some(rule_id) = current_rule {
+            scan.host_rules[rule_id]
                 .options
+                .entry(keyword.clone())
+                .or_default()
+                .extend(values.clone());
+        } else {
+            scan.global_options
                 .entry(keyword.clone())
                 .or_default()
                 .extend(values.clone());
@@ -492,6 +599,52 @@ Host prod-api
         assert_eq!(parsed.hosts.len(), 1);
         assert_eq!(parsed.hosts[0].alias, "prod-api");
         assert!(parsed.groups[0].expanded_by_default);
+    }
+
+    #[test]
+    fn resolves_inherited_options_from_wildcard_hosts() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join("config");
+        fs::write(
+            &config,
+            r#"
+# @group Work
+Host work-*
+  User bobbb
+  Compression yes
+  ServerAliveInterval 30
+
+# @description this is the primary web server
+Host work-web
+  HostName test1
+
+# @description this is the secondary web server
+Host work-web2
+  HostName test2
+"#,
+        )
+        .unwrap();
+
+        let parsed = SshConfig::load(Some(&config)).unwrap();
+        let web = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "work-web")
+            .unwrap();
+        let web2 = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "work-web2")
+            .unwrap();
+
+        for host in [web, web2] {
+            assert_eq!(host.resolved.user.as_deref(), Some("bobbb"));
+            assert_eq!(host.options["Compression"], ["yes"]);
+            assert_eq!(host.options["ServerAliveInterval"], ["30"]);
+            assert_eq!(host.group_path, ["Work"]);
+        }
+        assert_eq!(web.resolved.host_name.as_deref(), Some("test1"));
+        assert_eq!(web2.resolved.host_name.as_deref(), Some("test2"));
     }
 
     #[test]

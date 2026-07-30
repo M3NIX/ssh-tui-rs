@@ -38,6 +38,11 @@ group/folder comment is found. Each included file starts ungrouped, so metadata
 from one `config.d/*.conf` file cannot leak into the next. Folder paths use `/`
 for nesting.
 
+Wildcard `Host` blocks are not shown as connections, but their inherited
+options are resolved for matching concrete hosts with `ssh -G`. Inherited
+connection values such as `User`, `Port`, `IdentityFile`, and `ProxyJump` appear
+in the Connection pane; other inherited options appear under Configuration.
+
 ## Usage
 
 ```bash
