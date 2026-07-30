@@ -25,7 +25,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .constraints([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)])
         .split(layout[1]);
 
     render_tree(frame, app, body[0]);
