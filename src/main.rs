@@ -94,8 +94,8 @@ fn run_loop(
                                         host.alias
                                     ));
                                 } else {
-                                    launch_ssh(terminal, &host.alias)?;
-                                    app.set_status(format!("Returned from ssh {}", host.alias));
+                                    let status = launch_ssh(terminal, &host.alias)?;
+                                    app.set_status(status);
                                 }
                             } else {
                                 app.toggle_selected_folder();
@@ -120,7 +120,10 @@ fn run_loop(
     Ok(())
 }
 
-fn launch_ssh(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, alias: &str) -> Result<()> {
+fn launch_ssh(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    alias: &str,
+) -> Result<String> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -131,10 +134,12 @@ fn launch_ssh(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, alias: &str
 
     let status = Command::new("ssh").arg(alias).status();
     println!();
-    match status {
-        Ok(status) => println!("ssh {alias} exited with {status}"),
-        Err(error) => println!("failed to launch ssh {alias}: {error}"),
-    }
+    let message = match status {
+        Ok(status) if status.success() => format!("ssh {alias} exited successfully"),
+        Ok(status) => format!("ssh {alias} failed with {status}"),
+        Err(error) => format!("Failed to launch ssh {alias}: {error}"),
+    };
+    println!("{message}");
     print!("Press Enter to return to ssh-tui...");
     io::stdout().flush()?;
     let mut line = String::new();
@@ -146,5 +151,8 @@ fn launch_ssh(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, alias: &str
         EnterAlternateScreen,
         EnableMouseCapture
     )?;
-    Ok(())
+    terminal.autoresize()?;
+    terminal.clear()?;
+    terminal.hide_cursor()?;
+    Ok(message)
 }
