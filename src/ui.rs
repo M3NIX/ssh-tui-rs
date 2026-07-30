@@ -5,12 +5,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
 };
 
 use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow};
-
-const TWO_TAB_GAP: &str = "        ";
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let root = frame.area();
@@ -215,19 +213,28 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
         panes[0],
     );
 
-    let items = descendant_hosts(app, node.id)
+    let rows = descendant_hosts(app, node.id)
         .into_iter()
-        .map(|(host_index, host)| {
-            folder_host_item(
-                host,
-                app.host_reachability(host_index),
-                &node_path_parts(app, node.id),
-                app.search.trim(),
-            )
-        })
+        .map(|(_, host)| folder_host_row(host, app.search.trim()))
         .collect::<Vec<_>>();
     frame.render_widget(
-        List::new(items).block(
+        Table::new(
+            rows,
+            [
+                Constraint::Percentage(28),
+                Constraint::Percentage(30),
+                Constraint::Percentage(42),
+            ],
+        )
+        .header(
+            Row::new(["Host", "HostName", "Description"]).style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .column_spacing(2)
+        .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!("Hosts ({hosts})")),
@@ -499,51 +506,29 @@ fn descendant_hosts(app: &App, node_id: usize) -> Vec<(usize, &crate::HostEntry)
     hosts
 }
 
-fn folder_host_item(
-    host: &crate::HostEntry,
-    reachability: HostReachability,
-    selected_path: &[String],
-    query: &str,
-) -> ListItem<'static> {
-    let mut spans = vec![host_dot(reachability)];
-    spans.extend(fuzzy_highlighted(
-        &host.alias,
-        query,
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    ));
-    let relative_group = host
-        .group_path
-        .strip_prefix(selected_path)
-        .unwrap_or(&host.group_path);
-    if !relative_group.is_empty() {
-        spans.push(Span::raw("  "));
-        spans.extend(fuzzy_highlighted(
-            &relative_group.join("/"),
+fn folder_host_row(host: &crate::HostEntry, query: &str) -> Row<'static> {
+    let host_name = host.resolved.host_name.as_deref().unwrap_or_default();
+    let description = host.description.as_deref().unwrap_or_default();
+
+    Row::new([
+        Cell::from(Line::from(fuzzy_highlighted(
+            &host.alias,
             query,
-            Style::default().fg(Color::Cyan),
-        ));
-    }
-    if let Some(host_name) = &host.resolved.host_name {
-        spans.push(Span::raw("  "));
-        spans.extend(fuzzy_highlighted(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        Cell::from(Line::from(fuzzy_highlighted(
             host_name,
             query,
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
-
-    if let Some(description) = &host.description {
-        spans.push(Span::raw(TWO_TAB_GAP));
-        spans.extend(fuzzy_highlighted(
+            Style::default().fg(Color::White),
+        ))),
+        Cell::from(Line::from(fuzzy_highlighted(
             description,
             query,
             Style::default().fg(Color::DarkGray),
-        ));
-    }
-
-    ListItem::new(Line::from(spans))
+        ))),
+    ])
 }
 
 fn host_dot(reachability: HostReachability) -> Span<'static> {
@@ -786,16 +771,22 @@ mod tests {
                     source: PathBuf::from("config"),
                     line: 3,
                     options: BTreeMap::new(),
-                    resolved: ResolvedHost::default(),
+                    resolved: ResolvedHost {
+                        host_name: Some("db.internal".into()),
+                        ..ResolvedHost::default()
+                    },
                 },
                 HostEntry {
                     alias: "alpha-api".into(),
-                    description: None,
+                    description: Some("Public API".into()),
                     group_path: vec!["Production".into()],
                     source: PathBuf::from("config"),
                     line: 5,
                     options: BTreeMap::new(),
-                    resolved: ResolvedHost::default(),
+                    resolved: ResolvedHost {
+                        host_name: Some("api.internal".into()),
+                        ..ResolvedHost::default()
+                    },
                 },
             ],
         };
@@ -814,19 +805,33 @@ mod tests {
 
         assert!(app.expanded.is_empty());
         assert!(rendered.contains("Hosts (2)"));
+        assert!(rendered.contains("HostName"));
+        assert!(rendered.contains("Description"));
         assert!(rendered.contains("alpha-api"));
         assert!(rendered.contains("zeta-db"));
         assert!(rendered.contains("Primary database"));
         assert!(rendered.find("alpha-api") < rendered.find("zeta-db"));
-        let zeta_row = terminal
+        assert!(!rendered.contains('●'));
+        let rendered_rows = terminal
             .backend()
             .buffer()
             .content
             .chunks(100)
             .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        let alpha_row = rendered_rows
+            .iter()
+            .find(|row| row.contains("alpha-api"))
+            .expect("alpha-api row");
+        let zeta_row = rendered_rows
+            .iter()
             .find(|row| row.contains("zeta-db"))
             .expect("zeta-db row");
-        assert!(zeta_row.contains("Primary database"));
+        assert_eq!(alpha_row.find("api.internal"), zeta_row.find("db.internal"));
+        assert_eq!(
+            alpha_row.find("Public API"),
+            zeta_row.find("Primary database")
+        );
 
         app.search = "primary".into();
         app.rebuild_visible();
