@@ -149,19 +149,19 @@ jobs:
 
     steps:
       - name: Download Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ssh-tui-rs-linux-x86_64-glibc
           path: dist
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ssh-tui-rs-windows-x86_64
           path: dist
 
       - name: Download static Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ssh-tui-rs-linux-x86_64-musl
           path: dist
