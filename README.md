@@ -9,11 +9,11 @@ The demo is generated reproducibly with [`demo/record.py`](demo/record.py).
 
 ## Features
 
-- Foldable, alphabetically sorted tree with nested folders and host details
+- Foldable, alphabetically sorted tree with nested groups and host details
 - Native `Include` support for split configurations such as `~/.ssh/config.d/`
 - Metadata comments for groups, descriptions, hidden hosts, and default expansion
 - Effective inherited options resolved during the in-process configuration scan
-- Compact fuzzy search across aliases, hostnames, descriptions, and folder paths
+- Compact fuzzy search across aliases, hostnames, descriptions, and group paths
 - On-demand TCP reachability indicators for hosts
 - Embedded SSH terminal that keeps the host tree visible
 - Keyboard and mouse navigation
@@ -54,9 +54,9 @@ ssh-tui-rs --embedded-ssh
 | Key | Action |
 | --- | --- |
 | `j`, `k`, `Up`, `Down` | Move through the tree or search results |
-| `Space` | Fold/unfold a folder; reveal a search result |
-| `h`, `l`, `Left`, `Right` | Fold/unfold folders |
-| `Enter` | Connect to a host; toggle a folder; reveal a search result |
+| `Space` | Fold/unfold a group; reveal a search result |
+| `h`, `l`, `Left`, `Right` | Fold/unfold groups |
+| `Enter` | Connect to a host; toggle a group; reveal a search result |
 | `Alt+Enter` | Open the selected host in the inline terminal |
 | `/` | Enter search mode |
 | `F6` | Switch between the tree and an embedded SSH session |
@@ -65,14 +65,14 @@ ssh-tui-rs --embedded-ssh
 | `q`, `Esc` | Quit outside search |
 
 Mouse scrolling and selection are supported. Click the search box to start
-typing, click folders to toggle them, and double-click hosts to connect.
+typing, click groups to toggle them, and double-click hosts to connect.
 
 Use `Alt+Enter` for an inline session, or `--embedded-ssh` to make inline
 sessions the default. The terminal runs in the details pane and keeps the tree
 visible. Drag over text to select and copy it on mouse release.
 
-Reachability checks run when folders are unfolded. Ungrouped hosts and hosts in
-folders marked with `@expanded` are checked at startup. The probe is a direct
+Reachability checks run when groups are unfolded. Ungrouped hosts and hosts in
+groups marked with `@expanded` are checked at startup. The probe is a direct
 TCP connection to the effective `HostName` and `Port`; proxy-only hosts may
 therefore appear unreachable.
 
@@ -146,7 +146,7 @@ Supported metadata:
 
 | Comment | Effect |
 | --- | --- |
-| `# @group Work/Production` | Assign following hosts to a nested folder |
+| `# @group Work/Production` | Assign following hosts to a nested group |
 | `# @description text` | Describe the active group or next host |
 | `# @expanded` | Open the active group on startup |
 | `# @hidden` | Hide the next `Host` block from the TUI |
