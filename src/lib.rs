@@ -12,5 +12,5 @@ pub use embedded_session::{
     EmbeddedExit, EmbeddedFocus, EmbeddedMouseAction, EmbeddedPoll, EmbeddedSession,
 };
 pub use reachability::HostReachability;
-pub use ssh::{SSH_PROGRAM, ssh_arguments};
+pub use ssh::{SSH_PROGRAM, is_ssh_error_exit_code, ssh_arguments};
 pub use ssh_config::{GroupEntry, HostEntry, ResolvedHost, SshConfig};

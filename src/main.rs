@@ -21,8 +21,8 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use ssh_tui_rs::{
-    App, ConnectionFailure, EmbeddedMouseAction, InputMode, SSH_PROGRAM, SshConfig, ssh_arguments,
-    ui,
+    App, ConnectionFailure, EmbeddedMouseAction, InputMode, SSH_PROGRAM, SshConfig,
+    is_ssh_error_exit_code, ssh_arguments, ui,
 };
 
 const MAX_CAPTURED_STDERR: usize = 64 * 1024;
@@ -424,7 +424,13 @@ fn run_ssh(config: &std::path::Path, alias: &str) -> SshOutcome {
         .unwrap_or_default();
 
     match status {
-        Ok(status) if status.success() => SshOutcome { failure: None },
+        Ok(status)
+            if status
+                .code()
+                .is_some_and(|code| !is_ssh_error_exit_code(i64::from(code))) =>
+        {
+            SshOutcome { failure: None }
+        }
         Ok(status) => failed_outcome(alias, summarize_stderr(&captured), status.code()),
         Err(error) => failed_outcome(
             alias,

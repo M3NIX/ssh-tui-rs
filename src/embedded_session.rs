@@ -3,7 +3,7 @@ use std::{ffi::OsString, path::Path};
 use crossterm::event::{KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tastty::{Builder, ExitStatus, ManagedTerminal, Position, Terminal, TerminalSize};
 
-use crate::{SSH_PROGRAM, ssh_arguments};
+use crate::{SSH_PROGRAM, is_ssh_error_exit_code, ssh_arguments};
 
 const SCROLLBACK_ROWS: u32 = 2_000;
 
@@ -88,7 +88,12 @@ impl EmbeddedSession {
         }
         match self.terminal.try_wait() {
             Ok(None) => EmbeddedPoll::Running,
-            Ok(Some(status)) if status.success() => EmbeddedPoll::Succeeded,
+            Ok(Some(status))
+                if status.signal().is_none()
+                    && !is_ssh_error_exit_code(i64::from(status.exit_code())) =>
+            {
+                EmbeddedPoll::Succeeded
+            }
             Ok(Some(status)) => {
                 self.exit = Some(EmbeddedExit::Failed(status));
                 self.focus = EmbeddedFocus::Tree;
@@ -242,12 +247,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_captures_output_and_reports_failure() {
+    fn terminal_captures_output_and_reports_ssh_failure() {
         let mut session = EmbeddedSession::spawn_command(
             "/bin/sh",
             [
                 OsString::from("-c"),
-                OsString::from("printf 'embedded output\\n'; exit 7"),
+                OsString::from("printf 'embedded output\\n'; exit 255"),
             ],
             "test",
             10,
@@ -260,12 +265,34 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        assert_eq!(session.exit_label().as_deref(), Some("exit 7"));
+        assert_eq!(session.exit_label().as_deref(), Some("exit 255"));
         assert!(
             session
                 .terminal
                 .with_screen(|screen| screen.contents().contains("embedded output"))
         );
+    }
+
+    #[test]
+    fn terminal_accepts_a_remote_nonzero_exit_status() {
+        let mut session = EmbeddedSession::spawn_command(
+            "/bin/sh",
+            [OsString::from("-c"), OsString::from("exit 7")],
+            "test",
+            10,
+            40,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut result = EmbeddedPoll::Running;
+
+        while result == EmbeddedPoll::Running && Instant::now() < deadline {
+            result = session.poll();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(result, EmbeddedPoll::Succeeded);
+        assert_eq!(session.exit_label(), None);
     }
 
     #[test]
