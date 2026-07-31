@@ -41,7 +41,7 @@ jobs:
           tar -C dist -czf ssh-tui-rs-linux-x86_64-glibc.tar.gz ssh-tui-rs-linux-x86_64-glibc
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ssh-tui-rs-linux-x86_64-glibc
           path: ssh-tui-rs-linux-x86_64-glibc.tar.gz
@@ -93,7 +93,7 @@ jobs:
           tar -C dist -czf ssh-tui-rs-linux-x86_64-musl.tar.gz ssh-tui-rs-linux-x86_64-musl
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ssh-tui-rs-linux-x86_64-musl
           path: ssh-tui-rs-linux-x86_64-musl.tar.gz
@@ -131,7 +131,7 @@ jobs:
           Copy-Item target/release/ssh-tui-rs.exe dist/ssh-tui-rs-windows-x86_64.exe
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ssh-tui-rs-windows-x86_64
           path: dist/ssh-tui-rs-windows-x86_64.exe
