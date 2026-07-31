@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-linux:
-    name: Build Linux binary
+    name: Build Linux binary (glibc)
     runs-on: ubuntu-latest
 
     steps:
@@ -37,14 +37,66 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          install -Dm755 target/release/ssh-tui-rs dist/ssh-tui-rs-linux-x86_64
-          tar -C dist -czf ssh-tui-rs-linux-x86_64.tar.gz ssh-tui-rs-linux-x86_64
+          install -Dm755 target/release/ssh-tui-rs dist/ssh-tui-rs-linux-x86_64-glibc
+          tar -C dist -czf ssh-tui-rs-linux-x86_64-glibc.tar.gz ssh-tui-rs-linux-x86_64-glibc
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-tui-rs-linux-x86_64
-          path: ssh-tui-rs-linux-x86_64.tar.gz
+          name: ssh-tui-rs-linux-x86_64-glibc
+          path: ssh-tui-rs-linux-x86_64-glibc.tar.gz
+          if-no-files-found: error
+
+  build-linux-musl:
+    name: Build Linux binary (musl)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-musl-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --locked --release --target x86_64-unknown-linux-musl
+
+      - name: Verify static linking
+        run: |
+          binary=target/x86_64-unknown-linux-musl/release/ssh-tui-rs
+          if readelf --program-headers "$binary" | grep --quiet INTERP; then
+            echo "Expected a statically linked musl binary" >&2
+            exit 1
+          fi
+
+      - name: Prepare artifact
+        run: |
+          install -Dm755 target/x86_64-unknown-linux-musl/release/ssh-tui-rs dist/ssh-tui-rs-linux-x86_64-musl
+          tar -C dist -czf ssh-tui-rs-linux-x86_64-musl.tar.gz ssh-tui-rs-linux-x86_64-musl
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-tui-rs-linux-x86_64-musl
+          path: ssh-tui-rs-linux-x86_64-musl.tar.gz
           if-no-files-found: error
 
   build-windows:
@@ -89,6 +141,7 @@ jobs:
     name: Publish release assets
     needs:
       - build-linux
+      - build-linux-musl
       - build-windows
     runs-on: ubuntu-latest
     permissions:
@@ -98,13 +151,19 @@ jobs:
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: ssh-tui-rs-linux-x86_64
+          name: ssh-tui-rs-linux-x86_64-glibc
           path: dist
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
           name: ssh-tui-rs-windows-x86_64
+          path: dist
+
+      - name: Download static Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ssh-tui-rs-linux-x86_64-musl
           path: dist
 
       - name: Attach artifacts to GitHub Release
@@ -114,12 +173,14 @@ jobs:
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
-              dist/ssh-tui-rs-linux-x86_64.tar.gz \
+              dist/ssh-tui-rs-linux-x86_64-glibc.tar.gz \
+              dist/ssh-tui-rs-linux-x86_64-musl.tar.gz \
               dist/ssh-tui-rs-windows-x86_64.exe \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              dist/ssh-tui-rs-linux-x86_64.tar.gz \
+              dist/ssh-tui-rs-linux-x86_64-glibc.tar.gz \
+              dist/ssh-tui-rs-linux-x86_64-musl.tar.gz \
               dist/ssh-tui-rs-windows-x86_64.exe \
               --verify-tag \
               --generate-notes \

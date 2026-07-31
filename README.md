@@ -78,6 +78,9 @@ TCP connection to the effective `HostName` and `Port`; proxy-only hosts may
 therefore appear unreachable.
 
 Linux release artifacts are built when a `v*` or `release-*` tag is pushed.
+The `linux-x86_64-glibc` artifact uses the standard GNU C library. Use the
+`linux-x86_64-musl` artifact for a statically linked binary that does not
+depend on the host's glibc version.
 
 ## Config Examples
 
