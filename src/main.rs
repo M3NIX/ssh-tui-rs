@@ -149,8 +149,11 @@ fn run_loop(
                                 app.reveal_search_selection();
                                 activate_selected_host(terminal, app, true)?;
                             }
-                            KeyCode::Enter | KeyCode::Char(' ') => app.reveal_search_selection(),
+                            KeyCode::Enter => app.reveal_search_selection(),
                             KeyCode::Backspace => app.pop_search(),
+                            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.pop_search();
+                            }
                             KeyCode::Char(c) => app.push_search(c),
                             KeyCode::Up => app.select_previous(),
                             KeyCode::Down => app.select_next(),
