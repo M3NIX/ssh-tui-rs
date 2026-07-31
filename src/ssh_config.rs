@@ -77,6 +77,13 @@ struct HostRuleIndex {
     wildcard: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum DirectiveScope {
+    Global,
+    Host(usize),
+    Match,
+}
+
 #[derive(Debug)]
 struct ScannedHost {
     alias: String,
@@ -94,7 +101,8 @@ impl SshConfig {
         };
 
         let mut scan = Scan::default();
-        scan_file(&source, &mut scan)
+        scan_file(&source, &mut scan, DirectiveScope::Global)
+            .map(|_| ())
             .with_context(|| format!("failed to read {}", source.display()))?;
 
         let rule_index = index_host_rules(&scan.host_rules);
@@ -249,20 +257,19 @@ fn host_patterns_match(patterns: &[String], alias: &str) -> bool {
     positive_match
 }
 
-fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
+fn scan_file(path: &Path, scan: &mut Scan, mut scope: DirectiveScope) -> Result<DirectiveScope> {
     let path = expand_path(path);
     if !path.exists() {
-        return Ok(());
+        return Ok(scope);
     }
 
     let canonical = path.canonicalize().unwrap_or(path.clone());
     if !scan.visited.insert(canonical) {
-        return Ok(());
+        return Ok(scope);
     }
 
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
-    let mut current_rule: Option<usize> = None;
     let mut active_group: Option<ActiveGroup> = None;
     let mut pending_host = PendingHostMeta::default();
 
@@ -292,9 +299,8 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
 
         if keyword.eq_ignore_ascii_case("include") {
             for include in resolve_includes(&values) {
-                scan_file(&include, scan)?;
+                scope = scan_file(&include, scan, scope)?;
             }
-            current_rule = None;
             pending_host = PendingHostMeta::default();
             continue;
         }
@@ -308,7 +314,7 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
                 patterns: values.clone(),
                 options: BTreeMap::new(),
             });
-            current_rule = Some(rule_id);
+            scope = DirectiveScope::Host(rule_id);
             if pending_host.hidden {
                 pending_host = PendingHostMeta::default();
                 continue;
@@ -342,25 +348,29 @@ fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
         }
 
         if keyword.eq_ignore_ascii_case("match") {
-            current_rule = None;
+            scope = DirectiveScope::Match;
             continue;
         }
 
-        if let Some(rule_id) = current_rule {
-            scan.host_rules[rule_id]
-                .options
-                .entry(keyword.clone())
-                .or_default()
-                .extend(values.clone());
-        } else {
-            scan.global_options
-                .entry(keyword.clone())
-                .or_default()
-                .extend(values.clone());
+        match scope {
+            DirectiveScope::Global => {
+                scan.global_options
+                    .entry(keyword.clone())
+                    .or_default()
+                    .extend(values.clone());
+            }
+            DirectiveScope::Host(rule_id) => {
+                scan.host_rules[rule_id]
+                    .options
+                    .entry(keyword.clone())
+                    .or_default()
+                    .extend(values.clone());
+            }
+            DirectiveScope::Match => {}
         }
     }
 
-    Ok(())
+    Ok(scope)
 }
 
 fn apply_comment_metadata(
@@ -654,6 +664,65 @@ Host work-web2
         }
         assert_eq!(web.resolved.host_name.as_deref(), Some("test1"));
         assert_eq!(web2.resolved.host_name.as_deref(), Some("test2"));
+    }
+
+    #[test]
+    fn match_options_do_not_become_global_defaults() {
+        let dir = tempdir().unwrap();
+        let included = dir.path().join("conditional.conf");
+        let config = dir.path().join("config");
+        fs::write(&included, "  IdentityFile ~/.ssh/conditional\n").unwrap();
+        fs::write(
+            &config,
+            format!(
+                r#"
+Host dev
+  HostName dev.internal
+  User alice
+
+Host prod
+  HostName prod.internal
+
+Match originalhost prod
+  User deploy
+  Include {}
+  Port 2222
+
+Host after-match
+  HostName after.internal
+  User carol
+"#,
+                included.display()
+            ),
+        )
+        .unwrap();
+
+        let parsed = SshConfig::load(Some(&config)).unwrap();
+        let dev = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "dev")
+            .unwrap();
+        let prod = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "prod")
+            .unwrap();
+        let after = parsed
+            .hosts
+            .iter()
+            .find(|host| host.alias == "after-match")
+            .unwrap();
+
+        assert_eq!(dev.resolved.user.as_deref(), Some("alice"));
+        assert_eq!(dev.resolved.port, None);
+        assert!(dev.resolved.identity_files.is_empty());
+        assert_eq!(prod.resolved.user, None);
+        assert_eq!(prod.resolved.port, None);
+        assert!(prod.resolved.identity_files.is_empty());
+        assert_eq!(after.resolved.user.as_deref(), Some("carol"));
+        assert_eq!(after.resolved.port, None);
+        assert!(after.resolved.identity_files.is_empty());
     }
 
     #[test]

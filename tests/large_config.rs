@@ -11,7 +11,7 @@ fn loads_large_configs_in_a_single_scan() {
     for index in 0..1_000 {
         write!(
             contents,
-            "Host host-{index}\n  HostName 10.0.{}.{index}\n\n",
+            "Host host-{index}\n  HostName 10.0.{}.{index}\n\nMatch originalhost conditional-{index}\n  Port 2222\n\n",
             index / 256
         )
         .unwrap();
@@ -22,6 +22,7 @@ fn loads_large_configs_in_a_single_scan() {
 
     assert_eq!(parsed.hosts.len(), 1_000);
     assert_eq!(parsed.hosts[999].resolved.user.as_deref(), Some("deploy"));
+    assert_eq!(parsed.hosts[999].resolved.port, None);
     assert_eq!(
         parsed.hosts[999].resolved.host_name.as_deref(),
         Some("10.0.3.999")
