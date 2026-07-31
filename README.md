@@ -1,86 +1,136 @@
-# ssh-tui
+# ssh-tui-rs
 
-A read-only terminal UI for browsing and launching hosts from OpenSSH config files.
+A read-only, keyboard-first TUI for browsing OpenSSH configuration, inspecting
+effective host options, and starting SSH sessions.
 
-## Metadata
+## Features
 
-Metadata is stored as comments above `Host` blocks. The app never writes to SSH
-config files.
+- Foldable, alphabetically sorted tree with nested folders and host details
+- Native `Include` support for split configurations such as `~/.ssh/config.d/`
+- Metadata comments for groups, descriptions, hidden hosts, and default expansion
+- Effective inherited options resolved through `ssh -G`
+- Compact fuzzy search across aliases, hostnames, descriptions, and folder paths
+- On-demand TCP reachability indicators for hosts
+- Keyboard and mouse navigatio
+- Read-only operation: SSH configuration files are never modified
 
-```sshconfig
-# @group Work/Production
-# @description Customer-facing systems
-# @expanded
-# @description API entry point
-Host prod-api
-  HostName 10.0.0.10
-  User deploy
-  Port 2222
+## Requirements
 
-# @group Work/Production/Databases
-# @description Persistent storage
-# @description Primary PostgreSQL node
-Host prod-db
-  HostName prod-db.internal
-```
+- Linux
+- OpenSSH client (`ssh`) in `PATH`
+- Rust stable when building from source
 
-Supported comments:
+## Installation & Usage
 
-- `# @group path/to/folder`
-- `# @description text`
-- `# @hidden` above a host omits it from the TUI
-- `# @expanded` after a group opens that folder on launch
-
-The first `# @description` after `# @group` describes that group. A subsequent
-description before a `Host` block describes that host. A group applies to every
-following host in the same physical file until another `# @group` comment is
-found. Each included file starts ungrouped, so metadata from one
-`config.d/*.conf` file cannot leak into the next. Folder paths use `/` for
-nesting.
-
-Wildcard `Host` blocks are not shown as connections, but their inherited
-options are resolved for matching concrete hosts with `ssh -G`. Inherited
-connection values such as `User`, `Port`, `IdentityFile`, and `ProxyJump` appear
-in the Connection pane; other inherited options appear under Configuration.
-
-## Usage
+Build the release binary:
 
 ```bash
-cargo run -- --config ~/.ssh/config
+cargo build --locked --release
+./target/release/ssh-tui
 ```
 
-Controls:
+Or install it from the checked-out repository:
 
-- `j/k` or arrow keys move through the tree.
-- `h/l`, left/right, or space fold and unfold folders.
-- `/` starts fuzzy search across host names, host descriptions, folder names,
-  folder descriptions, hostnames, and group paths. Matches must be compact, so
-  characters spread across unrelated words are ignored.
-- In search mode, `Enter` or space reveals the selected result in the normal
-  tree and unfolds its complete folder path.
-- Outside search mode, `Enter` launches `ssh <HostAlias>`.
-- `--no-network-check` disables reachability probes and displays every host as
-  reachable.
-- Mouse wheel scrolls selection; left click selects and toggles folders.
-  Clicking the search pane enters search mode, and double-clicking a host
-  launches its SSH connection.
+```bash
+cargo install --locked --path .
+```
 
-Folders start folded. Folder and host entries are sorted alphabetically, and
-selecting a folder shows its descendant hosts in the details pane.
+By default, `ssh-tui` reads `~/.ssh/config`.
 
-When an SSH session exits, the TUI is restored automatically. Failed sessions
-show the captured SSH error in a dialog; press `Enter` or `Esc`, or click, to
-close it.
+```bash
+ssh-tui
+ssh-tui --config ~/.ssh/other-config
+ssh-tui --no-network-check
+```
 
-Host dots are gray until their folder is unfolded, yellow while a background
-TCP check is running, green when the configured `HostName` and `Port` are
-reachable, and red otherwise. Checks use a five-second timeout and port `22`
-when `Port` is not set. Folding and unfolding a folder refreshes its descendant
-hosts. Ungrouped hosts and hosts in `# @expanded` folders are checked on launch.
-Configuration source paths are displayed in host details but are not searched.
+| Key | Action |
+| --- | --- |
+| `j`, `k`, `Up`, `Down` | Move through the tree or search results |
+| `Space` | Fold/unfold a folder; reveal a search result |
+| `h`, `l`, `Left`, `Right` | Fold/unfold folders |
+| `Enter` | Connect to a host; toggle a folder; reveal a search result |
+| `/` | Enter search mode |
+| `Backspace`, `Esc` | Edit or leave search |
+| `q`, `Esc` | Quit outside search |
 
-## Release Artifacts
+Mouse scrolling and selection are supported. Click the search box to start
+typing, click folders to toggle them, and double-click hosts to connect.
 
-Pushing a tag matching `v*` or `release-*` runs the GitHub Actions workflow in
-`.github/workflows/release-artifact.yml`. It builds `cargo build --locked
---release` and uploads `ssh-tui-linux-x86_64.tar.gz` as a workflow artifact.
+Reachability checks run when folders are unfolded. Ungrouped hosts and hosts in
+folders marked with `@expanded` are checked at startup. The probe is a direct
+TCP connection to the effective `HostName` and `Port`; proxy-only hosts may
+therefore appear unreachable.
+
+Linux release artifacts are built when a `v*` or `release-*` tag is pushed.
+
+## Config Examples
+
+Use OpenSSH's native `Include` directive in the main configuration:
+
+```sshconfig
+# ~/.ssh/config
+Include ~/.ssh/config.d/*.conf
+
+Host arch
+  HostName localhost
+  User m3nix
+```
+
+Each included file starts without an active group. This makes one file per
+environment an easy way to organize the tree. Hosts without `@group`, such as
+`arch` above, remain at the root.
+
+```sshconfig
+# ~/.ssh/config.d/work.conf
+# @group Work
+# @description Company systems
+# @expanded
+
+Host work-*
+  User bob
+  IdentityFile ~/.ssh/work_ed25519
+
+# @description SSH jump host
+Host work-bastion
+  HostName bastion.example.com
+
+# @group Work/Production
+# @description Customer-facing systems
+
+Host work-web
+  HostName web.internal
+  ProxyJump work-bastion
+
+# @description Primary database
+Host work-db
+  HostName db.internal
+  ProxyJump work-bastion
+```
+
+```sshconfig
+# ~/.ssh/config.d/homelab.conf
+# @group Personal/Lab
+# @description Home lab systems
+
+Host lab-controller
+  HostName 192.168.1.50
+  User m3nix
+
+# @hidden
+Host lab-helper
+  HostName helper.internal
+```
+
+Supported metadata:
+
+| Comment | Effect |
+| --- | --- |
+| `# @group Work/Production` | Assign following hosts to a nested folder |
+| `# @description text` | Describe the active group or next host |
+| `# @expanded` | Open the active group on startup |
+| `# @hidden` | Hide the next `Host` block from the TUI |
+
+The first `@description` after `@group` describes that group. Later
+descriptions apply to the following host. A group remains active until another
+`@group` appears in the same physical file. Wildcard `Host` blocks are hidden
+from the tree but their options are inherited by matching concrete hosts.
