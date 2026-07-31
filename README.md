@@ -152,3 +152,18 @@ The first `@description` after `@group` describes that group. Later
 descriptions apply to the following host. A group remains active until another
 `@group` appears in the same physical file. Wildcard `Host` blocks are hidden
 from the tree but their options are inherited by matching concrete hosts.
+
+## Acknowledgments
+
+This project was inspired by [sshclick](https://github.com/karlot/sshclick),
+created by [karlot](https://github.com/karlot). Thank you for the original idea.
+
+## Disclaimer
+
+The code in this project was written by AI and may contain mistakes. Review and
+test it before relying on it in sensitive or production environments.
+
+## License
+
+This project is free and open-source software licensed under the
+[MIT License](LICENSE).
