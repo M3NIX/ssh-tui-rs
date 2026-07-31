@@ -3,6 +3,8 @@ use std::{ffi::OsString, path::Path};
 use crossterm::event::{KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tastty::{Builder, ExitStatus, ManagedTerminal, Position, Terminal, TerminalSize};
 
+use crate::{SSH_PROGRAM, ssh_arguments};
+
 const SCROLLBACK_ROWS: u32 = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +52,7 @@ pub struct EmbeddedSession {
 
 impl EmbeddedSession {
     pub fn spawn_ssh(alias: &str, config: &Path, rows: u16, cols: u16) -> tastty::Result<Self> {
-        Self::spawn_command("ssh", ssh_arguments(config, alias), alias, rows, cols)
+        Self::spawn_command(SSH_PROGRAM, ssh_arguments(config, alias), alias, rows, cols)
     }
 
     fn spawn_command(
@@ -224,15 +226,6 @@ impl EmbeddedSession {
     }
 }
 
-pub fn ssh_arguments(config: &Path, alias: &str) -> Vec<OsString> {
-    vec![
-        OsString::from("-F"),
-        config.as_os_str().to_owned(),
-        OsString::from("--"),
-        OsString::from(alias),
-    ]
-}
-
 fn terminal_size(rows: u16, cols: u16) -> TerminalSize {
     TerminalSize {
         rows: rows.max(1),
@@ -247,19 +240,6 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::*;
-
-    #[test]
-    fn ssh_arguments_use_the_loaded_config() {
-        assert_eq!(
-            ssh_arguments(Path::new("/tmp/alternate-config"), "work-web"),
-            [
-                OsString::from("-F"),
-                OsString::from("/tmp/alternate-config"),
-                OsString::from("--"),
-                OsString::from("work-web"),
-            ]
-        );
-    }
 
     #[test]
     fn terminal_captures_output_and_reports_failure() {

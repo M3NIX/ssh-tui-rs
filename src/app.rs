@@ -1,19 +1,16 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::mpsc,
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
 
 use crate::{
-    EmbeddedFocus, EmbeddedMouseAction, EmbeddedPoll, EmbeddedSession, GroupEntry, HostEntry,
-    HostReachability, SshConfig,
-    reachability::{CheckResult, CheckTarget, spawn_checks},
+    EmbeddedFocus, EmbeddedMouseAction, EmbeddedPoll, EmbeddedSession, HostEntry, HostReachability,
+    SshConfig,
+    reachability::{CheckTarget, ReachabilityTracker},
     search,
+    tree::build_tree,
 };
 
-const REACHABILITY_TIMEOUT: Duration = Duration::from_secs(5);
+pub use crate::tree::{Node, NodeKind, VisibleRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
@@ -28,29 +25,37 @@ pub struct ConnectionFailure {
     pub exit_status: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeKind {
-    Root,
-    Folder,
-    Host(usize),
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Area {
+    left: u16,
+    top: u16,
+    width: u16,
+    height: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Node {
-    pub id: usize,
-    pub name: String,
-    pub description: Option<String>,
-    pub parent: Option<usize>,
-    pub children: Vec<usize>,
-    pub kind: NodeKind,
-    pub search_fields: Vec<String>,
+impl Area {
+    fn contains(self, column: u16, row: u16) -> bool {
+        column >= self.left
+            && column < self.left.saturating_add(self.width)
+            && row >= self.top
+            && row < self.top.saturating_add(self.height)
+    }
+
+    fn inner(self) -> Self {
+        Self {
+            left: self.left.saturating_add(1),
+            top: self.top.saturating_add(1),
+            width: self.width.saturating_sub(2).max(1),
+            height: self.height.saturating_sub(2).max(1),
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VisibleRow {
-    pub node_id: usize,
-    pub depth: usize,
-    pub matched_indices: Vec<usize>,
+#[derive(Debug, Default)]
+struct InteractionLayout {
+    search: Area,
+    tree: Area,
+    details: Area,
 }
 
 #[derive(Debug)]
@@ -63,37 +68,28 @@ pub struct App {
     pub visible: Vec<VisibleRow>,
     pub search: String,
     pub input_mode: InputMode,
-    pub search_left: u16,
-    pub search_top: u16,
-    pub search_width: u16,
-    pub search_height: u16,
-    pub tree_left: u16,
-    pub tree_top: u16,
-    pub tree_width: u16,
-    pub tree_height: u16,
-    pub details_left: u16,
-    pub details_top: u16,
-    pub details_width: u16,
-    pub details_height: u16,
     pub visible_offset: usize,
     pub status: String,
     pub reachability: HashMap<usize, HostReachability>,
     pub connection_failure: Option<ConnectionFailure>,
     pub embedded_session: Option<EmbeddedSession>,
-    network_checks_enabled: bool,
+    layout: InteractionLayout,
     embedded_ssh_enabled: bool,
-    reachability_updates: Vec<mpsc::Receiver<CheckResult>>,
+    reachability_tracker: ReachabilityTracker,
 }
 
 impl App {
+    #[must_use]
     pub fn new(config: SshConfig) -> Self {
         Self::with_network_checks(config, true)
     }
 
+    #[must_use]
     pub fn with_network_checks(config: SshConfig, network_checks_enabled: bool) -> Self {
         Self::with_features(config, network_checks_enabled, false)
     }
 
+    #[must_use]
     pub fn with_features(
         config: SshConfig,
         network_checks_enabled: bool,
@@ -109,26 +105,14 @@ impl App {
             visible: Vec::new(),
             search: String::new(),
             input_mode: InputMode::Normal,
-            search_left: 0,
-            search_top: 0,
-            search_width: 0,
-            search_height: 0,
-            tree_left: 0,
-            tree_top: 0,
-            tree_width: 0,
-            tree_height: 0,
-            details_left: 0,
-            details_top: 0,
-            details_width: 0,
-            details_height: 0,
             visible_offset: 0,
             status: String::new(),
             reachability: HashMap::new(),
             connection_failure: None,
             embedded_session: None,
-            network_checks_enabled,
+            layout: InteractionLayout::default(),
             embedded_ssh_enabled,
-            reachability_updates: Vec::new(),
+            reachability_tracker: ReachabilityTracker::new(network_checks_enabled),
         };
         app.rebuild_visible();
         app.status = match app.config.hosts.len() {
@@ -223,10 +207,10 @@ impl App {
         if !matches!(self.nodes[node_id].kind, NodeKind::Folder | NodeKind::Root) {
             return;
         }
-        if !self.expanded.insert(node_id) {
-            self.expanded.remove(&node_id);
-        } else {
+        if self.expanded.insert(node_id) {
             self.check_hosts_below(node_id);
+        } else {
+            self.expanded.remove(&node_id);
         }
         self.rebuild_visible();
     }
@@ -275,14 +259,10 @@ impl App {
     }
 
     pub fn select_at(&mut self, terminal_column: u16, terminal_row: u16) -> bool {
-        if terminal_column < self.tree_left
-            || terminal_column >= self.tree_left.saturating_add(self.tree_width)
-            || terminal_row < self.tree_top
-            || terminal_row >= self.tree_top.saturating_add(self.tree_height)
-        {
+        if !self.layout.tree.contains(terminal_column, terminal_row) {
             return false;
         }
-        let visible_index = self.visible_offset + usize::from(terminal_row - self.tree_top);
+        let visible_index = self.visible_offset + usize::from(terminal_row - self.layout.tree.top);
         if visible_index >= self.visible.len() {
             return false;
         }
@@ -295,8 +275,7 @@ impl App {
         if selected
             && self
                 .selected_node_id()
-                .map(|node_id| matches!(self.nodes[node_id].kind, NodeKind::Folder))
-                .unwrap_or(false)
+                .is_some_and(|node_id| matches!(self.nodes[node_id].kind, NodeKind::Folder))
         {
             self.toggle_selected_folder();
         }
@@ -304,32 +283,35 @@ impl App {
     }
 
     pub fn search_contains(&self, terminal_column: u16, terminal_row: u16) -> bool {
-        terminal_column >= self.search_left
-            && terminal_column < self.search_left.saturating_add(self.search_width)
-            && terminal_row >= self.search_top
-            && terminal_row < self.search_top.saturating_add(self.search_height)
+        self.layout.search.contains(terminal_column, terminal_row)
     }
 
     pub fn set_search_area(&mut self, left: u16, top: u16, width: u16, height: u16) {
-        self.search_left = left;
-        self.search_top = top;
-        self.search_width = width;
-        self.search_height = height;
+        self.layout.search = Area {
+            left,
+            top,
+            width,
+            height,
+        };
     }
 
     pub fn set_tree_area(&mut self, left: u16, top: u16, width: u16, height: u16) {
-        self.tree_left = left;
-        self.tree_top = top;
-        self.tree_width = width;
-        self.tree_height = height;
+        self.layout.tree = Area {
+            left,
+            top,
+            width,
+            height,
+        };
         self.keep_selection_visible();
     }
 
     pub fn set_details_area(&mut self, left: u16, top: u16, width: u16, height: u16) {
-        self.details_left = left;
-        self.details_top = top;
-        self.details_width = width;
-        self.details_height = height;
+        self.layout.details = Area {
+            left,
+            top,
+            width,
+            height,
+        };
     }
 
     pub fn embedded_ssh_enabled(&self) -> bool {
@@ -453,10 +435,12 @@ impl App {
         let Some(session) = &mut self.embedded_session else {
             return Ok(EmbeddedMouseAction::Ignored);
         };
-        let left = self.details_left.saturating_add(1);
-        let top = self.details_top.saturating_add(1);
-        let width = self.details_width.saturating_sub(2).max(1);
-        let height = self.details_height.saturating_sub(2).max(1);
+        let Area {
+            left,
+            top,
+            width,
+            height,
+        } = self.layout.details.inner();
         if mouse.column < left
             || mouse.column >= left.saturating_add(width)
             || mouse.row < top
@@ -487,10 +471,7 @@ impl App {
     }
 
     pub fn details_contains(&self, terminal_column: u16, terminal_row: u16) -> bool {
-        terminal_column >= self.details_left
-            && terminal_column < self.details_left.saturating_add(self.details_width)
-            && terminal_row >= self.details_top
-            && terminal_row < self.details_top.saturating_add(self.details_height)
+        self.layout.details.contains(terminal_column, terminal_row)
     }
 
     pub fn embedded_selection_text(&self) -> Option<String> {
@@ -509,27 +490,11 @@ impl App {
     }
 
     pub fn poll_reachability(&mut self) {
-        let mut active = Vec::new();
-        for updates in self.reachability_updates.drain(..) {
-            loop {
-                match updates.try_recv() {
-                    Ok(result) => {
-                        self.reachability
-                            .insert(result.host_index, result.reachability);
-                    }
-                    Err(mpsc::TryRecvError::Empty) => {
-                        active.push(updates);
-                        break;
-                    }
-                    Err(mpsc::TryRecvError::Disconnected) => break,
-                }
-            }
-        }
-        self.reachability_updates = active;
+        self.reachability_tracker.poll_into(&mut self.reachability);
     }
 
     pub fn host_reachability(&self, host_index: usize) -> HostReachability {
-        if !self.network_checks_enabled {
+        if !self.reachability_tracker.enabled() {
             return HostReachability::Reachable;
         }
         self.reachability
@@ -538,17 +503,9 @@ impl App {
             .unwrap_or(HostReachability::Unchecked)
     }
 
-    pub fn display_name<'a>(&'a self, node: &'a Node) -> &'a str {
-        &node.name
-    }
-
     fn embedded_terminal_area(&self) -> (u16, u16, u16, u16) {
-        (
-            self.details_left.saturating_add(1),
-            self.details_top.saturating_add(1),
-            self.details_width.saturating_sub(2).max(1),
-            self.details_height.saturating_sub(2).max(1),
-        )
+        let area = self.layout.details.inner();
+        (area.left, area.top, area.width, area.height)
     }
 
     fn embedded_terminal_size(&self) -> (u16, u16) {
@@ -563,7 +520,7 @@ impl App {
     }
 
     fn check_host_indices(&mut self, host_indices: Vec<usize>) {
-        if !self.network_checks_enabled {
+        if !self.reachability_tracker.enabled() {
             return;
         }
         let mut targets = Vec::new();
@@ -585,8 +542,7 @@ impl App {
             });
         }
         if !targets.is_empty() {
-            self.reachability_updates
-                .push(spawn_checks(targets, REACHABILITY_TIMEOUT));
+            self.reachability_tracker.spawn(targets);
         }
     }
 
@@ -631,7 +587,7 @@ impl App {
     }
 
     fn keep_selection_visible(&mut self) {
-        let height = usize::from(self.tree_height.max(1));
+        let height = usize::from(self.layout.tree.height.max(1));
         if self.selected < self.visible_offset {
             self.visible_offset = self.selected;
         } else if self.selected >= self.visible_offset + height {
@@ -683,8 +639,7 @@ impl App {
             return (true, Vec::new());
         }
 
-        let display = self.display_name(node);
-        if let Some(indices) = search::fuzzy_indices(display, query) {
+        if let Some(indices) = search::fuzzy_indices(&node.name, query) {
             return (true, indices);
         }
 
@@ -697,164 +652,12 @@ impl App {
     }
 }
 
-fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize>, Vec<usize>) {
-    let mut nodes = vec![Node {
-        id: 0,
-        name: "All Hosts".to_string(),
-        description: None,
-        parent: None,
-        children: Vec::new(),
-        kind: NodeKind::Root,
-        search_fields: Vec::new(),
-    }];
-    let root_id = 0;
-    let mut expanded = HashSet::new();
-    let mut initially_expanded = Vec::new();
-    let mut folders: HashMap<Vec<String>, usize> = HashMap::new();
-
-    for group in &config.groups {
-        let folder_id = ensure_folder_path(&mut nodes, &mut folders, root_id, group);
-        if group.expanded_by_default {
-            initially_expanded.push(folder_id);
-            expand_with_ancestors(folder_id, root_id, &nodes, &mut expanded);
-        }
-    }
-
-    for (host_index, host) in config.hosts.iter().enumerate() {
-        let parent = if host.group_path.is_empty() {
-            root_id
-        } else {
-            let synthetic = GroupEntry {
-                path: host.group_path.clone(),
-                description: None,
-                expanded_by_default: false,
-                source: host.source.clone(),
-                line: host.line,
-            };
-            ensure_folder_path(&mut nodes, &mut folders, root_id, &synthetic)
-        };
-        let id = nodes.len();
-        let search_fields = [
-            Some(host.alias.clone()),
-            host.description.clone(),
-            Some(host.group_path.join("/")),
-            host.resolved.host_name.clone(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|field| !field.is_empty())
-        .collect();
-        nodes.push(Node {
-            id,
-            name: host.alias.clone(),
-            description: host.description.clone(),
-            parent: Some(parent),
-            children: Vec::new(),
-            kind: NodeKind::Host(host_index),
-            search_fields,
-        });
-        nodes[parent].children.push(id);
-    }
-
-    sort_children(root_id, &mut nodes);
-    (nodes, root_id, expanded, initially_expanded)
-}
-
-fn expand_with_ancestors(
-    node_id: usize,
-    root_id: usize,
-    nodes: &[Node],
-    expanded: &mut HashSet<usize>,
-) {
-    let mut current = Some(node_id);
-    while let Some(id) = current {
-        if id == root_id {
-            break;
-        }
-        expanded.insert(id);
-        current = nodes[id].parent;
-    }
-}
-
-fn ensure_folder_path(
-    nodes: &mut Vec<Node>,
-    folders: &mut HashMap<Vec<String>, usize>,
-    root_id: usize,
-    group: &GroupEntry,
-) -> usize {
-    let mut parent = root_id;
-    let mut path = Vec::new();
-
-    for segment in &group.path {
-        path.push(segment.clone());
-        if let Some(id) = folders.get(&path) {
-            parent = *id;
-            continue;
-        }
-
-        let id = nodes.len();
-        let description = if path == group.path {
-            group.description.clone()
-        } else {
-            None
-        };
-        let search_fields = [
-            Some(path.join("/")),
-            Some(segment.clone()),
-            description.clone(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|field| !field.is_empty())
-        .collect();
-        nodes.push(Node {
-            id,
-            name: segment.clone(),
-            description,
-            parent: Some(parent),
-            children: Vec::new(),
-            kind: NodeKind::Folder,
-            search_fields,
-        });
-        nodes[parent].children.push(id);
-        folders.insert(path.clone(), id);
-        parent = id;
-    }
-
-    parent
-}
-
-fn sort_children(node_id: usize, nodes: &mut [Node]) {
-    let mut children = std::mem::take(&mut nodes[node_id].children);
-    children.sort_by(|left, right| {
-        let left_node = &nodes[*left];
-        let right_node = &nodes[*right];
-        left_node
-            .name
-            .to_lowercase()
-            .cmp(&right_node.name.to_lowercase())
-            .then_with(|| kind_rank(&left_node.kind).cmp(&kind_rank(&right_node.kind)))
-            .then_with(|| left_node.name.cmp(&right_node.name))
-    });
-    for child in &children {
-        sort_children(*child, nodes);
-    }
-    nodes[node_id].children = children;
-}
-
-fn kind_rank(kind: &NodeKind) -> u8 {
-    match kind {
-        NodeKind::Root | NodeKind::Folder => 0,
-        NodeKind::Host(_) => 1,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::{ResolvedHost, SshConfig};
+    use crate::{GroupEntry, ResolvedHost, SshConfig};
 
     use super::*;
 
@@ -1050,7 +853,7 @@ mod tests {
 
         assert_eq!(app.host_reachability(0), HostReachability::Reachable);
         assert!(app.reachability.is_empty());
-        assert!(app.reachability_updates.is_empty());
+        assert!(app.reachability_tracker.is_idle());
     }
 
     #[test]

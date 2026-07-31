@@ -8,7 +8,7 @@ effective host options, and starting SSH sessions.
 - Foldable, alphabetically sorted tree with nested folders and host details
 - Native `Include` support for split configurations such as `~/.ssh/config.d/`
 - Metadata comments for groups, descriptions, hidden hosts, and default expansion
-- Effective inherited options resolved through `ssh -G`
+- Effective inherited options resolved during the in-process configuration scan
 - Compact fuzzy search across aliases, hostnames, descriptions, and folder paths
 - On-demand TCP reachability indicators for hosts
 - Embedded SSH terminal that keeps the host tree visible

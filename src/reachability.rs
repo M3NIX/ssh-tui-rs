@@ -1,11 +1,12 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     net::{TcpStream, ToSocketAddrs},
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
 const MAX_WORKERS: usize = 8;
+const REACHABILITY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostReachability {
@@ -26,6 +27,56 @@ pub(crate) struct CheckTarget {
 pub(crate) struct CheckResult {
     pub host_index: usize,
     pub reachability: HostReachability,
+}
+
+#[derive(Debug)]
+pub(crate) struct ReachabilityTracker {
+    enabled: bool,
+    updates: Vec<mpsc::Receiver<CheckResult>>,
+}
+
+impl ReachabilityTracker {
+    pub(crate) fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            updates: Vec::new(),
+        }
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn spawn(&mut self, targets: Vec<CheckTarget>) {
+        if self.enabled && !targets.is_empty() {
+            self.updates
+                .push(spawn_checks(targets, REACHABILITY_TIMEOUT));
+        }
+    }
+
+    pub(crate) fn poll_into(&mut self, reachability: &mut HashMap<usize, HostReachability>) {
+        let mut active = Vec::new();
+        for updates in self.updates.drain(..) {
+            loop {
+                match updates.try_recv() {
+                    Ok(result) => {
+                        reachability.insert(result.host_index, result.reachability);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        active.push(updates);
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+        self.updates = active;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.updates.is_empty()
+    }
 }
 
 pub(crate) fn spawn_checks(

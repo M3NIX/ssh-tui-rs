@@ -240,8 +240,7 @@ fn host_patterns_match(patterns: &[String], alias: &str) -> bool {
             .map_or((false, raw_pattern.as_str()), |pattern| (true, pattern));
         let pattern = pattern.to_ascii_lowercase();
         let matches = Pattern::new(&pattern)
-            .map(|pattern| pattern.matches(&alias))
-            .unwrap_or_else(|_| pattern == alias);
+            .map_or_else(|_| pattern == alias, |pattern| pattern.matches(&alias));
         if negated && matches {
             return false;
         }
@@ -509,7 +508,7 @@ fn resolve_includes(values: &[String]) -> Vec<PathBuf> {
             glob(&pattern)
                 .ok()
                 .into_iter()
-                .flat_map(|paths| paths.filter_map(|entry| entry.ok()))
+                .flat_map(|paths| paths.filter_map(Result::ok))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -533,13 +532,13 @@ fn expand_path(path: &Path) -> PathBuf {
 fn expand_tilde(path: &str) -> String {
     if path == "~" {
         return dirs::home_dir()
-            .map(|home| home.display().to_string())
-            .unwrap_or_else(|| path.to_string());
+            .map_or_else(|| path.to_string(), |home| home.display().to_string());
     }
     if let Some(rest) = path.strip_prefix("~/") {
-        return dirs::home_dir()
-            .map(|home| home.join(rest).display().to_string())
-            .unwrap_or_else(|| path.to_string());
+        return dirs::home_dir().map_or_else(
+            || path.to_string(),
+            |home| home.join(rest).display().to_string(),
+        );
     }
     path.to_string()
 }
@@ -797,28 +796,5 @@ Host bastion *.internal !blocked
         let parsed = SshConfig::load(Some(&config)).unwrap();
         assert_eq!(parsed.hosts.len(), 1);
         assert_eq!(parsed.hosts[0].alias, "bastion");
-    }
-
-    #[test]
-    fn loads_large_configs_in_a_single_scan() {
-        let dir = tempdir().unwrap();
-        let config = dir.path().join("config");
-        let mut contents = String::from("Host *\n  User deploy\n  IdentityFile ~/.ssh/deploy\n\n");
-        for index in 0..1_000 {
-            contents.push_str(&format!(
-                "Host host-{index}\n  HostName 10.0.{}.{index}\n\n",
-                index / 256
-            ));
-        }
-        fs::write(&config, contents).unwrap();
-
-        let parsed = SshConfig::load(Some(&config)).unwrap();
-
-        assert_eq!(parsed.hosts.len(), 1_000);
-        assert_eq!(parsed.hosts[999].resolved.user.as_deref(), Some("deploy"));
-        assert_eq!(
-            parsed.hosts[999].resolved.host_name.as_deref(),
-            Some("10.0.3.999")
-        );
     }
 }

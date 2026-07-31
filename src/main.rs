@@ -21,7 +21,8 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use ssh_tui_rs::{
-    App, ConnectionFailure, EmbeddedMouseAction, InputMode, SshConfig, ssh_arguments, ui,
+    App, ConnectionFailure, EmbeddedMouseAction, InputMode, SSH_PROGRAM, SshConfig, ssh_arguments,
+    ui,
 };
 
 const MAX_CAPTURED_STDERR: usize = 64 * 1024;
@@ -393,7 +394,7 @@ fn launch_ssh(
 }
 
 fn run_ssh(config: &std::path::Path, alias: &str) -> SshOutcome {
-    let mut command = Command::new("ssh");
+    let mut command = Command::new(SSH_PROGRAM);
     command
         .args(ssh_arguments(config, alias))
         .stderr(Stdio::piped());
@@ -402,7 +403,7 @@ fn run_ssh(config: &std::path::Path, alias: &str) -> SshOutcome {
         Err(error) => {
             return failed_outcome(
                 alias,
-                format!("Could not start the ssh process: {error}"),
+                format!("Could not start the SSH process: {error}"),
                 None,
             );
         }
@@ -422,7 +423,7 @@ fn run_ssh(config: &std::path::Path, alias: &str) -> SshOutcome {
         Ok(status) => failed_outcome(alias, summarize_stderr(&captured), status.code()),
         Err(error) => failed_outcome(
             alias,
-            format!("Could not wait for the ssh process: {error}"),
+            format!("Could not wait for the SSH process: {error}"),
             None,
         ),
     }

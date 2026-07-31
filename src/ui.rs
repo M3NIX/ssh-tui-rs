@@ -140,7 +140,7 @@ fn render_tree_row(app: &App, row: &VisibleRow, selected: bool) -> Line<'static>
     };
     spans.push(Span::styled(marker, marker_style));
     spans.extend(highlighted_name(
-        app.display_name(node),
+        &node.name,
         &row.matched_indices,
         selected,
         name_style,
