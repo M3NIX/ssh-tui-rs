@@ -23,7 +23,6 @@ const MAX_CAPTURED_STDERR: usize = 64 * 1024;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 struct SshOutcome {
-    status: String,
     failure: Option<ConnectionFailure>,
 }
 
@@ -179,7 +178,6 @@ fn connect_selected_host(
         return Ok(());
     };
     let outcome = launch_ssh(terminal, &alias)?;
-    app.set_status(outcome.status);
     if let Some(failure) = outcome.failure {
         app.show_connection_failure(failure);
     }
@@ -239,10 +237,7 @@ fn run_ssh(alias: &str) -> SshOutcome {
         .unwrap_or_default();
 
     match status {
-        Ok(status) if status.success() => SshOutcome {
-            status: format!("Session with {alias} ended"),
-            failure: None,
-        },
+        Ok(status) if status.success() => SshOutcome { failure: None },
         Ok(status) => failed_outcome(alias, summarize_stderr(&captured), status.code()),
         Err(error) => failed_outcome(
             alias,
@@ -254,7 +249,6 @@ fn run_ssh(alias: &str) -> SshOutcome {
 
 fn failed_outcome(alias: &str, message: String, exit_status: Option<i32>) -> SshOutcome {
     SshOutcome {
-        status: format!("Connection to {alias} failed"),
         failure: Some(ConnectionFailure {
             alias: alias.to_string(),
             message,

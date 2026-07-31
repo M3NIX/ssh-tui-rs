@@ -302,10 +302,6 @@ impl App {
         self.keep_selection_visible();
     }
 
-    pub fn set_status(&mut self, status: String) {
-        self.status = status;
-    }
-
     pub fn show_connection_failure(&mut self, failure: ConnectionFailure) {
         self.connection_failure = Some(failure);
     }
@@ -843,6 +839,32 @@ mod tests {
         assert_eq!(app.host_reachability(0), HostReachability::Reachable);
         assert!(app.reachability.is_empty());
         assert!(app.reachability_updates.is_empty());
+    }
+
+    #[test]
+    fn connection_failures_do_not_replace_the_host_count() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: Vec::new(),
+            hosts: vec![HostEntry {
+                alias: "offline".into(),
+                description: None,
+                group_path: Vec::new(),
+                source: PathBuf::from("config"),
+                line: 1,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost::default(),
+            }],
+        };
+
+        let mut app = App::with_network_checks(config, false);
+        app.show_connection_failure(ConnectionFailure {
+            alias: "offline".into(),
+            message: "Connection refused".into(),
+            exit_status: Some(255),
+        });
+
+        assert_eq!(app.status, "1 host");
     }
 
     #[test]
