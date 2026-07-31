@@ -46,3 +46,82 @@ jobs:
           name: ssh-tui-rs-linux-x86_64
           path: ssh-tui-rs-linux-x86_64.tar.gz
           if-no-files-found: error
+
+  build-windows:
+    name: Build Windows binary
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --locked --release
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/ssh-tui-rs.exe dist/ssh-tui-rs-windows-x86_64.exe
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-tui-rs-windows-x86_64
+          path: dist/ssh-tui-rs-windows-x86_64.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release assets
+    needs:
+      - build-linux
+      - build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ssh-tui-rs-linux-x86_64
+          path: dist
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ssh-tui-rs-windows-x86_64
+          path: dist
+
+      - name: Attach artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/ssh-tui-rs-linux-x86_64.tar.gz \
+              dist/ssh-tui-rs-windows-x86_64.exe \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/ssh-tui-rs-linux-x86_64.tar.gz \
+              dist/ssh-tui-rs-windows-x86_64.exe \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi
