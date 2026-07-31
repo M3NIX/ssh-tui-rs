@@ -106,6 +106,14 @@ statically linked and does not depend on the host's glibc version. Both Linux
 archives contain an executable named `ssh-tui-rs`. Windows releases are
 provided as an x86_64 `.exe`.
 
+## Limitations
+
+- Conditional options from `Match` blocks are not included in the TUI's
+  displayed effective values or reachability targets. OpenSSH still applies
+  them when connecting. OpenSSH provides no bulk configuration query, so exact
+  resolution would require a separate `ssh -G` evaluation for every host and
+  could execute `Match exec` commands many times.
+
 ## Config Examples
 
 Use OpenSSH's native `Include` directive in the main configuration:
