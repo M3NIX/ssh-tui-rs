@@ -4,8 +4,11 @@ use std::{
     time::Duration,
 };
 
+use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
+
 use crate::{
-    GroupEntry, HostEntry, HostReachability, SshConfig,
+    EmbeddedFocus, EmbeddedMouseAction, EmbeddedPoll, EmbeddedSession, GroupEntry, HostEntry,
+    HostReachability, SshConfig,
     reachability::{CheckResult, CheckTarget, spawn_checks},
     search,
 };
@@ -68,11 +71,17 @@ pub struct App {
     pub tree_top: u16,
     pub tree_width: u16,
     pub tree_height: u16,
+    pub details_left: u16,
+    pub details_top: u16,
+    pub details_width: u16,
+    pub details_height: u16,
     pub visible_offset: usize,
     pub status: String,
     pub reachability: HashMap<usize, HostReachability>,
     pub connection_failure: Option<ConnectionFailure>,
+    pub embedded_session: Option<EmbeddedSession>,
     network_checks_enabled: bool,
+    embedded_ssh_enabled: bool,
     reachability_updates: Vec<mpsc::Receiver<CheckResult>>,
 }
 
@@ -82,6 +91,14 @@ impl App {
     }
 
     pub fn with_network_checks(config: SshConfig, network_checks_enabled: bool) -> Self {
+        Self::with_features(config, network_checks_enabled, false)
+    }
+
+    pub fn with_features(
+        config: SshConfig,
+        network_checks_enabled: bool,
+        embedded_ssh_enabled: bool,
+    ) -> Self {
         let (nodes, root_id, expanded, initially_expanded) = build_tree(&config);
         let mut app = Self {
             config,
@@ -100,11 +117,17 @@ impl App {
             tree_top: 0,
             tree_width: 0,
             tree_height: 0,
+            details_left: 0,
+            details_top: 0,
+            details_width: 0,
+            details_height: 0,
             visible_offset: 0,
             status: String::new(),
             reachability: HashMap::new(),
             connection_failure: None,
+            embedded_session: None,
             network_checks_enabled,
+            embedded_ssh_enabled,
             reachability_updates: Vec::new(),
         };
         app.rebuild_visible();
@@ -302,6 +325,181 @@ impl App {
         self.keep_selection_visible();
     }
 
+    pub fn set_details_area(&mut self, left: u16, top: u16, width: u16, height: u16) {
+        self.details_left = left;
+        self.details_top = top;
+        self.details_width = width;
+        self.details_height = height;
+    }
+
+    pub fn embedded_ssh_enabled(&self) -> bool {
+        self.embedded_ssh_enabled
+    }
+
+    pub fn start_embedded_session(&mut self) -> tastty::Result<()> {
+        if self.embedded_session.is_some() {
+            return Ok(());
+        }
+        let Some(alias) = self.selected_host().map(|host| host.alias.clone()) else {
+            return Ok(());
+        };
+        let (rows, cols) = self.embedded_terminal_size();
+        self.embedded_session = Some(EmbeddedSession::spawn_ssh(
+            &alias,
+            &self.config.source,
+            rows,
+            cols,
+        )?);
+        Ok(())
+    }
+
+    pub fn poll_embedded_session(&mut self) {
+        let update = self.embedded_session.as_mut().map(EmbeddedSession::poll);
+        if update == Some(EmbeddedPoll::Succeeded) {
+            self.embedded_session = None;
+        }
+    }
+
+    pub fn sync_embedded_terminal_size(&mut self) -> tastty::Result<()> {
+        let (rows, cols) = self.embedded_terminal_size();
+        if let Some(session) = &mut self.embedded_session
+            && session.is_running()
+        {
+            session.resize(rows, cols)?;
+        }
+        Ok(())
+    }
+
+    pub fn embedded_session_running(&self) -> bool {
+        self.embedded_session
+            .as_ref()
+            .is_some_and(EmbeddedSession::is_running)
+    }
+
+    pub fn embedded_session_failed(&self) -> bool {
+        self.embedded_session
+            .as_ref()
+            .is_some_and(|session| !session.is_running())
+    }
+
+    pub fn embedded_terminal_focused(&self) -> bool {
+        self.embedded_session
+            .as_ref()
+            .is_some_and(|session| session.focus == EmbeddedFocus::Terminal)
+    }
+
+    pub fn focus_embedded_terminal(&mut self) {
+        if let Some(session) = &mut self.embedded_session
+            && session.is_running()
+        {
+            session.focus = EmbeddedFocus::Terminal;
+        }
+    }
+
+    pub fn focus_tree(&mut self) {
+        if let Some(session) = &mut self.embedded_session {
+            session.focus = EmbeddedFocus::Tree;
+        }
+    }
+
+    pub fn toggle_embedded_focus(&mut self) {
+        if let Some(session) = &mut self.embedded_session
+            && session.is_running()
+        {
+            session.focus = match session.focus {
+                EmbeddedFocus::Terminal => EmbeddedFocus::Tree,
+                EmbeddedFocus::Tree => EmbeddedFocus::Terminal,
+            };
+        }
+    }
+
+    pub fn close_embedded_session(&mut self) {
+        self.embedded_session = None;
+    }
+
+    pub fn send_embedded_key(&mut self, key: KeyEvent) -> tastty::Result<()> {
+        if let Some(session) = &mut self.embedded_session
+            && session.is_running()
+        {
+            session.clear_selection();
+            session.send_key(key)?;
+        }
+        Ok(())
+    }
+
+    pub fn send_embedded_paste(&mut self, text: &str) -> tastty::Result<()> {
+        if let Some(session) = &mut self.embedded_session
+            && session.is_running()
+        {
+            session.clear_selection();
+            session.send_paste(text)?;
+        }
+        Ok(())
+    }
+
+    pub fn send_embedded_focus(&self, gained: bool) -> tastty::Result<()> {
+        if let Some(session) = &self.embedded_session
+            && session.is_running()
+        {
+            session.send_focus(gained)?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_embedded_mouse(
+        &mut self,
+        mut mouse: MouseEvent,
+    ) -> tastty::Result<EmbeddedMouseAction> {
+        let Some(session) = &mut self.embedded_session else {
+            return Ok(EmbeddedMouseAction::Ignored);
+        };
+        let left = self.details_left.saturating_add(1);
+        let top = self.details_top.saturating_add(1);
+        let width = self.details_width.saturating_sub(2).max(1);
+        let height = self.details_height.saturating_sub(2).max(1);
+        if mouse.column < left
+            || mouse.column >= left.saturating_add(width)
+            || mouse.row < top
+            || mouse.row >= top.saturating_add(height)
+        {
+            return Ok(EmbeddedMouseAction::Ignored);
+        }
+
+        if !session.reports_mouse() {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    session.clear_selection();
+                    session.scroll_up(3);
+                    return Ok(EmbeddedMouseAction::Handled);
+                }
+                MouseEventKind::ScrollDown => {
+                    session.clear_selection();
+                    session.scroll_down(3);
+                    return Ok(EmbeddedMouseAction::Handled);
+                }
+                _ => {}
+            }
+        }
+
+        mouse.column -= left;
+        mouse.row -= top;
+        session.handle_mouse(mouse)
+    }
+
+    pub fn details_contains(&self, terminal_column: u16, terminal_row: u16) -> bool {
+        terminal_column >= self.details_left
+            && terminal_column < self.details_left.saturating_add(self.details_width)
+            && terminal_row >= self.details_top
+            && terminal_row < self.details_top.saturating_add(self.details_height)
+    }
+
+    pub fn embedded_selection_text(&self) -> Option<String> {
+        self.embedded_session
+            .as_ref()
+            .and_then(EmbeddedSession::selected_text)
+            .filter(|text| !text.is_empty())
+    }
+
     pub fn show_connection_failure(&mut self, failure: ConnectionFailure) {
         self.connection_failure = Some(failure);
     }
@@ -342,6 +540,20 @@ impl App {
 
     pub fn display_name<'a>(&'a self, node: &'a Node) -> &'a str {
         &node.name
+    }
+
+    fn embedded_terminal_area(&self) -> (u16, u16, u16, u16) {
+        (
+            self.details_left.saturating_add(1),
+            self.details_top.saturating_add(1),
+            self.details_width.saturating_sub(2).max(1),
+            self.details_height.saturating_sub(2).max(1),
+        )
+    }
+
+    fn embedded_terminal_size(&self) -> (u16, u16) {
+        let (_, _, cols, rows) = self.embedded_terminal_area();
+        (rows, cols)
     }
 
     fn check_hosts_below(&mut self, node_id: usize) {

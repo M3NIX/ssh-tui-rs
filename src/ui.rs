@@ -7,6 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
 };
+use tastty::widget::{Cursor, PseudoTerminal};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow};
@@ -77,7 +78,18 @@ fn render_header(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 }
 
 fn render_tree(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title("Tree");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(
+            if app.embedded_session_running() && !app.embedded_terminal_focused() {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        )
+        .title("Tree");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     app.set_tree_area(inner.x, inner.y, inner.width, inner.height);
@@ -174,7 +186,13 @@ fn highlighted_chars(value: &str, matched: &[usize], base: Style) -> Vec<Span<'s
     spans
 }
 
-fn render_details(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_details(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    app.set_details_area(area.x, area.y, area.width, area.height);
+    if app.embedded_session.is_some() {
+        render_embedded_session(frame, app, area);
+        return;
+    }
+
     let Some(node) = app.selected_node() else {
         frame.render_widget(
             Paragraph::new("No hosts found")
@@ -193,6 +211,77 @@ fn render_details(frame: &mut Frame<'_>, app: &App, area: Rect) {
             &app.search,
             area,
         ),
+    }
+}
+
+fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let Some(session) = &app.embedded_session else {
+        return;
+    };
+    let exited = session.exit_label();
+    let border_style = if exited.is_some() {
+        Style::default().fg(Color::Red)
+    } else if session.focus == crate::EmbeddedFocus::Terminal {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let title = exited.map_or_else(
+        || format!(" SSH: {} ", session.alias),
+        |status| format!(" SSH: {} ({status}) ", session.alias),
+    );
+
+    session.terminal.with_screen(|screen| {
+        let terminal = PseudoTerminal::new(screen)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style)
+                    .title(Span::styled(title, border_style)),
+            )
+            .cursor(Cursor::default().visibility(
+                session.is_running() && session.focus == crate::EmbeddedFocus::Terminal,
+            ));
+        frame.render_widget(terminal, area);
+    });
+    if let Some((start, end)) = session.selection_range() {
+        render_terminal_selection(frame, area, start, end);
+    }
+}
+
+fn render_terminal_selection(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    start: tastty::Position,
+    end: tastty::Position,
+) {
+    let width = area.width.saturating_sub(2);
+    let height = area.height.saturating_sub(2);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let style = Style::default().fg(Color::Black).bg(Color::LightBlue);
+    let last_col = width - 1;
+    let last_row = height - 1;
+    let start_row = start.row.min(last_row);
+    let end_row = end.row.min(last_row);
+
+    for row in start_row..=end_row {
+        let first_col = if row == start_row {
+            start.col.min(last_col)
+        } else {
+            0
+        };
+        let final_col = if row == end_row {
+            end.col.min(last_col)
+        } else {
+            last_col
+        };
+        for col in first_col..=final_col {
+            frame.buffer_mut()[(area.x + 1 + col, area.y + 1 + row)].set_style(style);
+        }
     }
 }
 
@@ -379,15 +468,29 @@ fn is_connection_option(key: &str) -> bool {
 
 fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Clear, area);
-    let bindings = match app.input_mode {
-        crate::InputMode::Normal => [
-            ("Enter", "Connect"),
+    let bindings = if app.embedded_session_failed() {
+        [("Enter/Esc", "Close")].as_slice()
+    } else if app.input_mode == crate::InputMode::Search {
+        [("Esc", "Clear"), ("Enter/Space", "Reveal")].as_slice()
+    } else if app.embedded_session_running() && app.embedded_terminal_focused() {
+        [("F6", "Tree")].as_slice()
+    } else if app.embedded_session_running() {
+        [
+            ("F6", "Terminal"),
+            ("x", "Close"),
             ("Space", "Fold"),
             ("/", "Search"),
             ("q", "Quit"),
         ]
-        .as_slice(),
-        crate::InputMode::Search => [("Esc", "Clear"), ("Enter/Space", "Reveal")].as_slice(),
+        .as_slice()
+    } else {
+        [
+            ("Enter", "SSH"),
+            ("Space", "Fold"),
+            ("/", "Search"),
+            ("q", "Quit"),
+        ]
+        .as_slice()
     };
     let mut spans = Vec::new();
     if !app.status.is_empty() {
@@ -713,6 +816,31 @@ mod tests {
     }
 
     #[test]
+    fn terminal_selection_is_visibly_highlighted() {
+        let backend = TestBackend::new(10, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                render_terminal_selection(
+                    frame,
+                    Rect::new(1, 1, 8, 4),
+                    tastty::Position { row: 0, col: 1 },
+                    tastty::Position { row: 1, col: 2 },
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(3, 2)].bg, Color::LightBlue);
+        assert_eq!(buffer[(7, 2)].bg, Color::LightBlue);
+        assert_eq!(buffer[(2, 3)].bg, Color::LightBlue);
+        assert_eq!(buffer[(4, 3)].bg, Color::LightBlue);
+        assert_eq!(buffer[(2, 2)].bg, Color::Reset);
+        assert_eq!(buffer[(5, 3)].bg, Color::Reset);
+    }
+
+    #[test]
     fn draws_without_panicking() {
         let config = crate::SshConfig {
             source: "config".into(),
@@ -755,7 +883,8 @@ mod tests {
         assert!(!rendered.contains("loaded"));
         assert!(rendered.contains("[Space] Fold"));
         assert!(!rendered.contains("Move"));
-        assert!(rendered.contains("[Enter] Connect"));
+        assert!(rendered.contains("[Enter] SSH"));
+        assert!(!rendered.contains("S+Enter"));
         let footer = buffer
             .content
             .iter()
@@ -765,7 +894,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         let host_count = footer.find("1 host").unwrap();
-        let connect = footer.find("[Enter] Connect").unwrap();
+        let connect = footer.find("[Enter] SSH").unwrap();
         let fold = footer.find("[Space] Fold").unwrap();
         let search = footer.find("[/] Search").unwrap();
         let quit = footer.find("[q] Quit").unwrap();

@@ -11,7 +11,8 @@ effective host options, and starting SSH sessions.
 - Effective inherited options resolved through `ssh -G`
 - Compact fuzzy search across aliases, hostnames, descriptions, and folder paths
 - On-demand TCP reachability indicators for hosts
-- Keyboard and mouse navigatio
+- Embedded SSH terminal that keeps the host tree visible
+- Keyboard and mouse navigation
 - Read-only operation: SSH configuration files are never modified
 
 ## Requirements
@@ -41,6 +42,7 @@ By default, `ssh-tui-rs` reads `~/.ssh/config`.
 ssh-tui-rs
 ssh-tui-rs --config ~/.ssh/other-config
 ssh-tui-rs --no-network-check
+ssh-tui-rs --embedded-ssh
 ```
 
 | Key | Action |
@@ -49,12 +51,20 @@ ssh-tui-rs --no-network-check
 | `Space` | Fold/unfold a folder; reveal a search result |
 | `h`, `l`, `Left`, `Right` | Fold/unfold folders |
 | `Enter` | Connect to a host; toggle a folder; reveal a search result |
+| `Alt+Enter` | Open the selected host in the inline terminal |
 | `/` | Enter search mode |
+| `F6` | Switch between the tree and an embedded SSH session |
+| `x` | Close an embedded session while the tree is focused |
 | `Backspace`, `Esc` | Edit or leave search |
 | `q`, `Esc` | Quit outside search |
 
 Mouse scrolling and selection are supported. Click the search box to start
 typing, click folders to toggle them, and double-click hosts to connect.
+
+Use `Alt+Enter` for an inline session, or `--embedded-ssh` to make inline
+sessions the default. The terminal runs in the details pane and keeps the tree
+visible. Drag over text with the mouse to copy it; Ctrl+Shift+C also copies the
+highlighted text when the outer terminal forwards that shortcut.
 
 Reachability checks run when folders are unfolded. Ungrouped hosts and hosts in
 folders marked with `@expanded` are checked at startup. The probe is a direct
