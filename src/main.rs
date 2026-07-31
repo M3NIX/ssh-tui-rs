@@ -129,7 +129,7 @@ fn run_loop(
                     }
 
                     if key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::F(6)
+                        && key.code == KeyCode::F(5)
                         && app.embedded_session_running()
                     {
                         app.toggle_embedded_focus();

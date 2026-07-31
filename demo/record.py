@@ -61,7 +61,7 @@ ACTIONS = [
     (22.5, b"\x1b\r", "Alt+Enter", "Open inline SSH"),
     (23.9, b"whoami\r", "whoami Enter", "Run an inline command"),
     (25.4, b"pwd\r", "pwd Enter", "Run another command"),
-    (26.9, b"\x1b[17~", "F6", "Return focus to the tree"),
+    (26.9, b"\x1b[15~", "F5", "Return focus to the tree"),
     (27.6, b"x", "x", "Close inline SSH"),
     (29.3, b"/", "/", "Search for the recovery gateway"),
     (30.3, b"gateway", "gateway", "Match dr-gateway-01"),

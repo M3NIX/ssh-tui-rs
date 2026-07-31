@@ -59,7 +59,7 @@ ssh-tui-rs --embedded-ssh
 | `Enter` | Connect to a host; toggle a group; reveal a search result |
 | `Alt+Enter` | Open the selected host in the inline terminal |
 | `/` | Enter search mode |
-| `F6` | Switch between the tree and an embedded SSH session |
+| `F5` | Switch between the tree and an embedded SSH session |
 | `x` | Close an embedded session while the tree is focused |
 | `Backspace`, `Esc` | Edit or leave search |
 | `q`, `Esc` | Quit outside search |

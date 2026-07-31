@@ -474,10 +474,10 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     } else if app.input_mode == crate::InputMode::Search {
         [("Esc", "Clear"), ("Enter/Space", "Reveal")].as_slice()
     } else if app.embedded_session_running() && app.embedded_terminal_focused() {
-        [("F6", "Tree")].as_slice()
+        [("F5", "Tree")].as_slice()
     } else if app.embedded_session_running() {
         [
-            ("F6", "Terminal"),
+            ("F5", "Terminal"),
             ("x", "Close"),
             ("Space", "Fold"),
             ("/", "Search"),
