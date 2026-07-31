@@ -60,10 +60,7 @@ fn main() -> Result<()> {
 fn run(app: &mut App) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
-    )?;
+    let keyboard_enhancement_enabled = try_push_keyboard_enhancement_flags(&mut stdout);
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -71,7 +68,9 @@ fn run(app: &mut App) -> Result<()> {
 
     let result = run_loop(&mut terminal, app, &mut clipboard);
 
-    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
+    if keyboard_enhancement_enabled {
+        try_pop_keyboard_enhancement_flags(terminal.backend_mut());
+    }
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -275,6 +274,18 @@ fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
 }
 
+fn try_push_keyboard_enhancement_flags(writer: &mut impl Write) -> bool {
+    execute!(
+        writer,
+        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
+    )
+    .is_ok()
+}
+
+fn try_pop_keyboard_enhancement_flags(writer: &mut impl Write) {
+    let _ = execute!(writer, PopKeyboardEnhancementFlags);
+}
+
 fn is_inline_shortcut(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Enter
 }
@@ -371,7 +382,7 @@ fn launch_ssh(
     config: &std::path::Path,
     alias: &str,
 ) -> Result<SshOutcome> {
-    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
+    try_pop_keyboard_enhancement_flags(terminal.backend_mut());
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -383,10 +394,7 @@ fn launch_ssh(
     let outcome = run_ssh(config, alias);
 
     enable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
-    )?;
+    let _ = try_push_keyboard_enhancement_flags(terminal.backend_mut());
     execute!(
         terminal.backend_mut(),
         EnterAlternateScreen,
