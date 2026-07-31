@@ -38,8 +38,8 @@ jobs:
       - name: Prepare artifact
         run: |
           artifact="ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-glibc"
-          install -Dm755 target/release/ssh-tui-rs "dist/${artifact}"
-          tar -C dist -czf "${artifact}.tar.gz" "${artifact}"
+          install -Dm755 target/release/ssh-tui-rs dist/ssh-tui-rs
+          tar -C dist -czf "${artifact}.tar.gz" ssh-tui-rs
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
@@ -91,8 +91,8 @@ jobs:
       - name: Prepare artifact
         run: |
           artifact="ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-musl"
-          install -Dm755 target/x86_64-unknown-linux-musl/release/ssh-tui-rs "dist/${artifact}"
-          tar -C dist -czf "${artifact}.tar.gz" "${artifact}"
+          install -Dm755 target/x86_64-unknown-linux-musl/release/ssh-tui-rs dist/ssh-tui-rs
+          tar -C dist -czf "${artifact}.tar.gz" ssh-tui-rs
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7

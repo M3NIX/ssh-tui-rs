@@ -27,9 +27,9 @@ The demo is generated reproducibly with [`demo/record.py`](demo/record.py).
 ## Installation & Usage
 
 Prebuilt x86_64 binaries for Linux and Windows are attached to tagged GitHub
-releases. Download the artifact for your platform and place the executable in
-a directory included in `PATH`, renaming it to `ssh-tui-rs` on Linux or
-`ssh-tui-rs.exe` on Windows.
+releases. Extract the Linux archive and place `ssh-tui-rs` in a directory
+included in `PATH`. On Windows, download the executable, rename it to
+`ssh-tui-rs.exe`, and place it in a directory included in `PATH`.
 
 To build and install from source with Cargo:
 
@@ -80,8 +80,9 @@ Linux and Windows release artifacts are built when a `v*` or `release-*` tag
 is pushed. Their filenames include the tag, such as
 `ssh-tui-rs-v0.4.0-linux-x86_64-glibc.tar.gz`. The `linux-x86_64-glibc`
 artifact uses the standard GNU C library; the `linux-x86_64-musl` artifact is
-statically linked and does not depend on the host's glibc version. Windows
-releases are provided as an x86_64 `.exe`.
+statically linked and does not depend on the host's glibc version. Both Linux
+archives contain an executable named `ssh-tui-rs`. Windows releases are
+provided as an x86_64 `.exe`.
 
 ## Config Examples
 
