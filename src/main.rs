@@ -174,7 +174,7 @@ fn run_loop(
                     }
 
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('q') => break,
                         KeyCode::Char('/') => app.start_search(),
                         KeyCode::Char('j') | KeyCode::Down => app.select_next(),
                         KeyCode::Char('k') | KeyCode::Up => app.select_previous(),

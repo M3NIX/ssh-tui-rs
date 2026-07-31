@@ -63,7 +63,7 @@ ssh-tui-rs --embedded-ssh
 | `/` | Enter search mode |
 | `F5` | Switch between the tree and an embedded SSH session |
 | `x` | Close an embedded session while the tree is focused |
-| `q`, `Esc` | Quit |
+| `q` | Quit |
 
 ### Search mode
 
