@@ -381,9 +381,9 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Clear, area);
     let bindings = match app.input_mode {
         crate::InputMode::Normal => [
+            ("Enter", "Connect"),
             ("Space", "Fold"),
             ("/", "Search"),
-            ("Enter", "Connect"),
             ("q", "Quit"),
         ]
         .as_slice(),
@@ -764,7 +764,15 @@ mod tests {
             .rev()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(footer.find("1 host") < footer.find("[Space] Fold"));
+        let host_count = footer.find("1 host").unwrap();
+        let connect = footer.find("[Enter] Connect").unwrap();
+        let fold = footer.find("[Space] Fold").unwrap();
+        let search = footer.find("[/] Search").unwrap();
+        let quit = footer.find("[q] Quit").unwrap();
+        assert!(host_count < connect);
+        assert!(connect < fold);
+        assert!(fold < search);
+        assert!(search < quit);
         assert!(!rendered.contains("(not set)"));
         let header = buffer
             .content
