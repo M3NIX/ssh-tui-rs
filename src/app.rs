@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn fuzzy_search_matches_descriptions_and_keeps_ancestors() {
+    fn fuzzy_search_matches_descriptions_and_usernames_and_keeps_ancestors() {
         let config = SshConfig {
             source: PathBuf::from("config"),
             groups: vec![GroupEntry {
@@ -712,7 +712,10 @@ mod tests {
                 source: PathBuf::from("config"),
                 line: 3,
                 options: BTreeMap::new(),
-                resolved: ResolvedHost::default(),
+                resolved: ResolvedHost {
+                    user: Some("deploy".into()),
+                    ..ResolvedHost::default()
+                },
             }],
         };
 
@@ -727,6 +730,16 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
         assert_eq!(app.host_reachability(0), HostReachability::Unchecked);
+
+        app.search = "deploy".into();
+        app.rebuild_visible();
+
+        let visible_names = app
+            .visible
+            .iter()
+            .map(|row| app.nodes[row.node_id].name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(visible_names, vec!["Work", "Prod", "prod-api"]);
     }
 
     #[test]

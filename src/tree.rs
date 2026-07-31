@@ -69,6 +69,7 @@ pub(crate) fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize
             host.description.clone(),
             Some(host.group_path.join("/")),
             host.resolved.host_name.clone(),
+            host.resolved.user.clone(),
         ]
         .into_iter()
         .flatten()

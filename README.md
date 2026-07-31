@@ -13,7 +13,7 @@ The demo is generated reproducibly with [`demo/record.py`](demo/record.py).
 - Native `Include` support for split configurations such as `~/.ssh/config.d/`
 - Metadata comments for groups, descriptions, hidden hosts, and default expansion
 - Effective inherited options resolved during the in-process configuration scan
-- Compact fuzzy search across aliases, hostnames, descriptions, and group paths
+- Compact fuzzy search across aliases, hostnames, usernames, descriptions, and group paths
 - On-demand TCP reachability indicators for hosts
 - Embedded SSH terminal that keeps the host tree visible
 - Keyboard and mouse navigation
