@@ -17,7 +17,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use ssh_tui::{App, ConnectionFailure, InputMode, SshConfig, ui};
+use ssh_tui_rs::{App, ConnectionFailure, InputMode, SshConfig, ui};
 
 const MAX_CAPTURED_STDERR: usize = 64 * 1024;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
@@ -344,10 +344,10 @@ mod tests {
 
     #[test]
     fn parses_no_network_check_and_rejects_removed_browse_only_flag() {
-        let args = Args::try_parse_from(["ssh-tui", "--no-network-check"]).unwrap();
+        let args = Args::try_parse_from(["ssh-tui-rs", "--no-network-check"]).unwrap();
         assert!(args.no_network_check);
 
-        assert!(Args::try_parse_from(["ssh-tui", "--browse-only"]).is_err());
+        assert!(Args::try_parse_from(["ssh-tui-rs", "--browse-only"]).is_err());
     }
 
     #[test]

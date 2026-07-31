@@ -1,4 +1,4 @@
-use ssh_tui::{App, SshConfig};
+use ssh_tui_rs::{App, SshConfig};
 
 #[test]
 fn example_config_loads_with_nested_groups_and_hostnames() {

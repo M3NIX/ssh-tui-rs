@@ -26,7 +26,7 @@ Build the release binary:
 
 ```bash
 cargo build --locked --release
-./target/release/ssh-tui
+./target/release/ssh-tui-rs
 ```
 
 Or install it from the checked-out repository:
@@ -35,12 +35,12 @@ Or install it from the checked-out repository:
 cargo install --locked --path .
 ```
 
-By default, `ssh-tui` reads `~/.ssh/config`.
+By default, `ssh-tui-rs` reads `~/.ssh/config`.
 
 ```bash
-ssh-tui
-ssh-tui --config ~/.ssh/other-config
-ssh-tui --no-network-check
+ssh-tui-rs
+ssh-tui-rs --config ~/.ssh/other-config
+ssh-tui-rs --no-network-check
 ```
 
 | Key | Action |

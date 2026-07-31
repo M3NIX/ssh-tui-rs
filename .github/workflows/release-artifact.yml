@@ -37,12 +37,12 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          install -Dm755 target/release/ssh-tui dist/ssh-tui-linux-x86_64
-          tar -C dist -czf ssh-tui-linux-x86_64.tar.gz ssh-tui-linux-x86_64
+          install -Dm755 target/release/ssh-tui-rs dist/ssh-tui-rs-linux-x86_64
+          tar -C dist -czf ssh-tui-rs-linux-x86_64.tar.gz ssh-tui-rs-linux-x86_64
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ssh-tui-linux-x86_64
-          path: ssh-tui-linux-x86_64.tar.gz
+          name: ssh-tui-rs-linux-x86_64
+          path: ssh-tui-rs-linux-x86_64.tar.gz
           if-no-files-found: error

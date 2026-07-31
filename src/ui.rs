@@ -785,7 +785,7 @@ mod tests {
         assert!(header.contains('/'));
         assert!(!header.contains("Connections"));
         assert!(!header.contains("Search:"));
-        assert!(!header.contains("ssh-tui"));
+        assert!(!header.contains("ssh-tui-rs"));
         assert!(!header.contains("1 hosts"));
         let checking_dots = buffer
             .content
