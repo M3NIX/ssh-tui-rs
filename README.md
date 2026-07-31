@@ -23,17 +23,24 @@ effective host options, and starting SSH sessions.
 
 ## Installation & Usage
 
-Build the release binary:
+Build and install the release binary for the current user:
 
 ```bash
 cargo build --locked --release
-./target/release/ssh-tui-rs
+install -Dm755 target/release/ssh-tui-rs ~/.local/bin/ssh-tui-rs
 ```
 
-Or install it from the checked-out repository:
+Alternatively, let Cargo build and install it to the same location:
 
 ```bash
-cargo install --locked --path .
+cargo install --locked --path . --root ~/.local
+```
+
+Make sure `~/.local/bin` is in `PATH`. Add this to your shell configuration,
+such as `~/.bashrc` or `~/.zshrc`, if necessary:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 By default, `ssh-tui-rs` reads `~/.ssh/config`.
