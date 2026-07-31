@@ -1,9 +1,8 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use anyhow::{Context, Result};
@@ -72,6 +71,12 @@ struct HostRule {
     options: BTreeMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Default)]
+struct HostRuleIndex {
+    exact: HashMap<String, Vec<usize>>,
+    wildcard: Vec<usize>,
+}
+
 #[derive(Debug)]
 struct ScannedHost {
     alias: String,
@@ -92,15 +97,16 @@ impl SshConfig {
         scan_file(&source, &mut scan)
             .with_context(|| format!("failed to read {}", source.display()))?;
 
+        let rule_index = index_host_rules(&scan.host_rules);
         let hosts = scan
             .hosts
             .into_iter()
             .map(|host| {
                 let options = resolve_effective_options(
-                    &source,
                     &host.alias,
                     &scan.global_options,
                     &scan.host_rules,
+                    &rule_index,
                 );
                 let resolved = resolve_host(&options);
                 HostEntry {
@@ -164,32 +170,53 @@ fn option_values(options: &BTreeMap<String, Vec<String>>, key: &str) -> Vec<Stri
 }
 
 fn resolve_effective_options(
-    source: &Path,
     alias: &str,
     global_options: &BTreeMap<String, Vec<String>>,
     host_rules: &[HostRule],
+    rule_index: &HostRuleIndex,
 ) -> BTreeMap<String, Vec<String>> {
     let mut applicable = BTreeMap::<String, (String, Vec<String>)>::new();
     collect_applicable_options(&mut applicable, global_options);
-    for rule in host_rules
-        .iter()
-        .filter(|rule| host_patterns_match(&rule.patterns, alias))
-    {
-        collect_applicable_options(&mut applicable, &rule.options);
+    let mut candidate_rules = rule_index
+        .exact
+        .get(&alias.to_ascii_lowercase())
+        .cloned()
+        .unwrap_or_default();
+    candidate_rules.extend(&rule_index.wildcard);
+    candidate_rules.sort_unstable();
+    candidate_rules.dedup();
+    for rule_id in candidate_rules {
+        let rule = &host_rules[rule_id];
+        if host_patterns_match(&rule.patterns, alias) {
+            collect_applicable_options(&mut applicable, &rule.options);
+        }
     }
 
-    let evaluated = evaluate_with_openssh(source, alias);
-    applicable
-        .into_values()
-        .map(|(display_key, fallback)| {
-            let values = evaluated
-                .as_ref()
-                .and_then(|options| options.get(&display_key.to_ascii_lowercase()))
-                .cloned()
-                .unwrap_or(fallback);
-            (display_key, values)
-        })
-        .collect()
+    applicable.into_values().collect()
+}
+
+fn index_host_rules(host_rules: &[HostRule]) -> HostRuleIndex {
+    let mut index = HostRuleIndex::default();
+    for (rule_id, rule) in host_rules.iter().enumerate() {
+        if rule
+            .patterns
+            .iter()
+            .any(|pattern| pattern.contains(['*', '?']))
+        {
+            index.wildcard.push(rule_id);
+            continue;
+        }
+        for pattern in &rule.patterns {
+            if !pattern.starts_with('!') {
+                index
+                    .exact
+                    .entry(pattern.to_ascii_lowercase())
+                    .or_default()
+                    .push(rule_id);
+            }
+        }
+    }
+    index
 }
 
 fn collect_applicable_options(
@@ -221,31 +248,6 @@ fn host_patterns_match(patterns: &[String], alias: &str) -> bool {
         positive_match |= !negated && matches;
     }
     positive_match
-}
-
-fn evaluate_with_openssh(source: &Path, alias: &str) -> Option<BTreeMap<String, Vec<String>>> {
-    let output = Command::new("ssh")
-        .args(["-G", "-F"])
-        .arg(source)
-        .arg("--")
-        .arg(alias)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let mut options = BTreeMap::<String, Vec<String>>::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Some((key, value)) = line.split_once(char::is_whitespace) else {
-            continue;
-        };
-        options
-            .entry(key.to_ascii_lowercase())
-            .or_default()
-            .push(value.trim().to_string());
-    }
-    Some(options)
 }
 
 fn scan_file(path: &Path, scan: &mut Scan) -> Result<()> {
@@ -795,5 +797,28 @@ Host bastion *.internal !blocked
         let parsed = SshConfig::load(Some(&config)).unwrap();
         assert_eq!(parsed.hosts.len(), 1);
         assert_eq!(parsed.hosts[0].alias, "bastion");
+    }
+
+    #[test]
+    fn loads_large_configs_in_a_single_scan() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join("config");
+        let mut contents = String::from("Host *\n  User deploy\n  IdentityFile ~/.ssh/deploy\n\n");
+        for index in 0..1_000 {
+            contents.push_str(&format!(
+                "Host host-{index}\n  HostName 10.0.{}.{index}\n\n",
+                index / 256
+            ));
+        }
+        fs::write(&config, contents).unwrap();
+
+        let parsed = SshConfig::load(Some(&config)).unwrap();
+
+        assert_eq!(parsed.hosts.len(), 1_000);
+        assert_eq!(parsed.hosts[999].resolved.user.as_deref(), Some("deploy"));
+        assert_eq!(
+            parsed.hosts[999].resolved.host_name.as_deref(),
+            Some("10.0.3.999")
+        );
     }
 }
