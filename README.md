@@ -46,9 +46,21 @@ By default, `ssh-tui-rs` reads the current user's OpenSSH configuration:
 
 ```bash
 ssh-tui-rs
-ssh-tui-rs --config ~/.ssh/other-config
-ssh-tui-rs --no-network-check
-ssh-tui-rs --embedded-ssh
+```
+
+Command-line options:
+
+```text
+Keyboard-first SSH config browser
+
+Usage: ssh-tui-rs [OPTIONS]
+
+Options:
+  -c, --config <PATH>     Read OpenSSH configuration from PATH
+      --no-network-check  Disable host reachability checks
+      --embedded-ssh      Run SSH sessions inside the details pane
+  -h, --help              Print help
+  -V, --version           Print version
 ```
 
 ### Normal mode

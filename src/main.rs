@@ -35,7 +35,12 @@ struct SshOutcome {
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Keyboard-first SSH config browser")]
 struct Args {
-    #[arg(short, long, value_name = "PATH")]
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        help = "Read OpenSSH configuration from PATH"
+    )]
     config: Option<PathBuf>,
 
     #[arg(long, help = "Disable host reachability checks")]
