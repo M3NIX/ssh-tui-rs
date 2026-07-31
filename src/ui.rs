@@ -472,7 +472,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let bindings = if app.embedded_session_failed() {
         [("Enter/Esc", "Close")].as_slice()
     } else if app.input_mode == crate::InputMode::Search {
-        [("Esc", "Clear"), ("Enter", "Reveal result in tree")].as_slice()
+        [("Esc", "Clear"), ("Enter", "Reveal")].as_slice()
     } else if app.embedded_session_running() && app.embedded_terminal_focused() {
         [("F5", "Tree")].as_slice()
     } else if app.embedded_session_running() {
@@ -987,7 +987,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(!rendered.contains("Move"));
-        assert!(rendered.contains("[Enter] Reveal result in tree"));
+        assert!(rendered.contains("[Enter] Reveal"));
     }
 
     #[test]
