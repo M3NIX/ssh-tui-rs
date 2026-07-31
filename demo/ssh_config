@@ -1,0 +1,35 @@
+# @group Engineering/Development
+# @description Development environment
+# @description Interactive application shell
+Host dev-shell-01
+  HostName shell-01.dev.northstar.internal
+  User devops
+  Port 2222
+
+# @description Asynchronous job worker
+Host dev-worker-01
+  HostName worker-01.dev.northstar.internal
+  User devops
+  Port 2222
+
+# @group Engineering/Production
+# @description Customer-facing production services
+# @description Primary API node
+Host prod-api-01
+  HostName api-01.prod.northstar.internal
+  User deploy
+  Port 2222
+
+# @description Primary database
+Host prod-db-01
+  HostName db-01.prod.northstar.internal
+  User postgres
+  Port 2222
+
+# @group Recovery
+# @description Standby infrastructure in the recovery region
+# @description Recovery-region access gateway
+Host dr-gateway-01
+  HostName gateway-01.dr.northstar.internal
+  User ops
+  Port 2223
