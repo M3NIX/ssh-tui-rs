@@ -3,6 +3,8 @@
 A read-only, keyboard-first TUI for browsing OpenSSH configuration, inspecting
 effective host options, and starting SSH sessions.
 
+![ssh-tui-rs demo showing tree navigation, fuzzy search, full-screen and inline SSH sessions, and a failed connection](assets/ssh-tui-demo.gif)
+
 ## Features
 
 - Foldable, alphabetically sorted tree with nested folders and host details
