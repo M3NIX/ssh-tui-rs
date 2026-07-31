@@ -134,6 +134,13 @@ impl App {
         app
     }
 
+    pub fn reload_config(&mut self) -> anyhow::Result<()> {
+        let config = SshConfig::load(Some(self.config.source.as_path()))?;
+        let network_checks_enabled = self.reachability_tracker.enabled();
+        *self = Self::with_features(config, network_checks_enabled, self.embedded_ssh_enabled);
+        Ok(())
+    }
+
     pub fn start_search(&mut self) {
         self.input_mode = InputMode::Search;
     }
@@ -654,8 +661,11 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    use tempfile::tempdir;
 
     use crate::{GroupEntry, ResolvedHost, SshConfig};
 
@@ -1028,5 +1038,41 @@ mod tests {
         assert_eq!(visible_names, ["Work", "Prod", "prod-api"]);
         assert_eq!(app.expanded.len(), 2);
         assert_eq!(app.host_reachability(0), HostReachability::Checking);
+    }
+
+    #[test]
+    fn reload_config_replaces_hosts_from_disk() {
+        let tempdir = tempdir().unwrap();
+        let config_path = tempdir.path().join("config");
+        fs::write(
+            &config_path,
+            "Host alpha\n  HostName alpha.example.test\n",
+        )
+        .unwrap();
+
+        let config = SshConfig::load(Some(&config_path)).unwrap();
+        let mut app = App::with_network_checks(config, false);
+        assert_eq!(app.config.hosts.len(), 1);
+        assert_eq!(app.config.hosts[0].alias, "alpha");
+        assert_eq!(app.status, "1 host");
+
+        fs::write(
+            &config_path,
+            "Host alpha\n  HostName alpha.example.test\n\nHost beta\n  HostName beta.example.test\n",
+        )
+        .unwrap();
+
+        app.reload_config().unwrap();
+
+        assert_eq!(app.config.hosts.len(), 2);
+        assert_eq!(
+            app.config
+                .hosts
+                .iter()
+                .map(|host| host.alias.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+        assert_eq!(app.status, "2 hosts");
     }
 }

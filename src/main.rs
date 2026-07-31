@@ -179,6 +179,11 @@ fn run_loop(
 
                     match key.code {
                         KeyCode::Char('q') => break,
+                        KeyCode::Char('r') => {
+                            if let Err(error) = app.reload_config() {
+                                app.status = format!("Reload failed: {error}");
+                            }
+                        }
                         KeyCode::Char('/') => app.start_search(),
                         KeyCode::Char('j') | KeyCode::Down => app.select_next(),
                         KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
