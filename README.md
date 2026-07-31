@@ -51,18 +51,28 @@ ssh-tui-rs --no-network-check
 ssh-tui-rs --embedded-ssh
 ```
 
+### Normal mode
+
 | Key | Action |
 | --- | --- |
-| `j`, `k`, `Up`, `Down` | Move through the tree or search results |
-| `Space` | Fold/unfold a group; reveal a search result |
+| `j`, `k`, `Up`, `Down` | Move through the tree |
+| `Space` | Fold/unfold the selected group |
 | `h`, `l`, `Left`, `Right` | Fold/unfold groups |
-| `Enter` | Connect to a host; toggle a group; reveal a search result |
+| `Enter` | Connect to a host or toggle a group |
 | `Alt+Enter` | Open the selected host in the inline terminal |
 | `/` | Enter search mode |
 | `F5` | Switch between the tree and an embedded SSH session |
 | `x` | Close an embedded session while the tree is focused |
-| `Backspace`, `Esc` | Edit or leave search |
-| `q`, `Esc` | Quit outside search |
+| `q`, `Esc` | Quit |
+
+### Search mode
+
+| Key | Action |
+| --- | --- |
+| `Up`, `Down` | Move through search results |
+| `Enter` | Reveal result in tree |
+| `Alt+Enter` | Reveal result in tree and open it in the inline terminal |
+| `Esc` | Leave search mode |
 
 Mouse scrolling and selection are supported. Click the search box to start
 typing, click groups to toggle them, and double-click hosts to connect.
