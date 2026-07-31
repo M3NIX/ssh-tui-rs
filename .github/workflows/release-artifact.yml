@@ -37,14 +37,15 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          install -Dm755 target/release/ssh-tui-rs dist/ssh-tui-rs-linux-x86_64-glibc
-          tar -C dist -czf ssh-tui-rs-linux-x86_64-glibc.tar.gz ssh-tui-rs-linux-x86_64-glibc
+          artifact="ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-glibc"
+          install -Dm755 target/release/ssh-tui-rs "dist/${artifact}"
+          tar -C dist -czf "${artifact}.tar.gz" "${artifact}"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ssh-tui-rs-linux-x86_64-glibc
-          path: ssh-tui-rs-linux-x86_64-glibc.tar.gz
+          name: ssh-tui-rs-${{ github.ref_name }}-linux-x86_64-glibc
+          path: ssh-tui-rs-${{ github.ref_name }}-linux-x86_64-glibc.tar.gz
           if-no-files-found: error
 
   build-linux-musl:
@@ -89,14 +90,15 @@ jobs:
 
       - name: Prepare artifact
         run: |
-          install -Dm755 target/x86_64-unknown-linux-musl/release/ssh-tui-rs dist/ssh-tui-rs-linux-x86_64-musl
-          tar -C dist -czf ssh-tui-rs-linux-x86_64-musl.tar.gz ssh-tui-rs-linux-x86_64-musl
+          artifact="ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-musl"
+          install -Dm755 target/x86_64-unknown-linux-musl/release/ssh-tui-rs "dist/${artifact}"
+          tar -C dist -czf "${artifact}.tar.gz" "${artifact}"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ssh-tui-rs-linux-x86_64-musl
-          path: ssh-tui-rs-linux-x86_64-musl.tar.gz
+          name: ssh-tui-rs-${{ github.ref_name }}-linux-x86_64-musl
+          path: ssh-tui-rs-${{ github.ref_name }}-linux-x86_64-musl.tar.gz
           if-no-files-found: error
 
   build-windows:
@@ -128,13 +130,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/ssh-tui-rs.exe dist/ssh-tui-rs-windows-x86_64.exe
+          Copy-Item target/release/ssh-tui-rs.exe "dist/ssh-tui-rs-${env:GITHUB_REF_NAME}-windows-x86_64.exe"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ssh-tui-rs-windows-x86_64
-          path: dist/ssh-tui-rs-windows-x86_64.exe
+          name: ssh-tui-rs-${{ github.ref_name }}-windows-x86_64
+          path: dist/ssh-tui-rs-${{ github.ref_name }}-windows-x86_64.exe
           if-no-files-found: error
 
   release:
@@ -151,19 +153,19 @@ jobs:
       - name: Download Linux artifact
         uses: actions/download-artifact@v8
         with:
-          name: ssh-tui-rs-linux-x86_64-glibc
+          name: ssh-tui-rs-${{ github.ref_name }}-linux-x86_64-glibc
           path: dist
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v8
         with:
-          name: ssh-tui-rs-windows-x86_64
+          name: ssh-tui-rs-${{ github.ref_name }}-windows-x86_64
           path: dist
 
       - name: Download static Linux artifact
         uses: actions/download-artifact@v8
         with:
-          name: ssh-tui-rs-linux-x86_64-musl
+          name: ssh-tui-rs-${{ github.ref_name }}-linux-x86_64-musl
           path: dist
 
       - name: Attach artifacts to GitHub Release
@@ -173,15 +175,15 @@ jobs:
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
-              dist/ssh-tui-rs-linux-x86_64-glibc.tar.gz \
-              dist/ssh-tui-rs-linux-x86_64-musl.tar.gz \
-              dist/ssh-tui-rs-windows-x86_64.exe \
+              "dist/ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-glibc.tar.gz" \
+              "dist/ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-musl.tar.gz" \
+              "dist/ssh-tui-rs-${GITHUB_REF_NAME}-windows-x86_64.exe" \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              dist/ssh-tui-rs-linux-x86_64-glibc.tar.gz \
-              dist/ssh-tui-rs-linux-x86_64-musl.tar.gz \
-              dist/ssh-tui-rs-windows-x86_64.exe \
+              "dist/ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-glibc.tar.gz" \
+              "dist/ssh-tui-rs-${GITHUB_REF_NAME}-linux-x86_64-musl.tar.gz" \
+              "dist/ssh-tui-rs-${GITHUB_REF_NAME}-windows-x86_64.exe" \
               --verify-tag \
               --generate-notes \
               --title "$GITHUB_REF_NAME"

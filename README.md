@@ -77,9 +77,11 @@ TCP connection to the effective `HostName` and `Port`; proxy-only hosts may
 therefore appear unreachable.
 
 Linux and Windows release artifacts are built when a `v*` or `release-*` tag
-is pushed. The `linux-x86_64-glibc` artifact uses the standard GNU C library;
-the `linux-x86_64-musl` artifact is statically linked and does not depend on
-the host's glibc version. Windows releases are provided as an x86_64 `.exe`.
+is pushed. Their filenames include the tag, such as
+`ssh-tui-rs-v0.4.0-linux-x86_64-glibc.tar.gz`. The `linux-x86_64-glibc`
+artifact uses the standard GNU C library; the `linux-x86_64-musl` artifact is
+statically linked and does not depend on the host's glibc version. Windows
+releases are provided as an x86_64 `.exe`.
 
 ## Config Examples
 
