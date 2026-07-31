@@ -5,6 +5,8 @@ effective host options, and starting SSH sessions.
 
 ![ssh-tui-rs demo showing tree navigation, fuzzy search, full-screen and inline SSH sessions, and a failed connection](assets/ssh-tui-demo.gif)
 
+The demo is generated reproducibly with [`demo/record.py`](demo/record.py).
+
 ## Features
 
 - Foldable, alphabetically sorted tree with nested folders and host details
@@ -19,33 +21,28 @@ effective host options, and starting SSH sessions.
 
 ## Requirements
 
-- Linux
 - OpenSSH client (`ssh`) in `PATH`
 - Rust stable when building from source
 
 ## Installation & Usage
 
-Build and install the release binary for the current user:
+Prebuilt x86_64 binaries for Linux and Windows are attached to tagged GitHub
+releases. Download the artifact for your platform and place the executable in
+a directory included in `PATH`, renaming it to `ssh-tui-rs` on Linux or
+`ssh-tui-rs.exe` on Windows.
+
+To build and install from source with Cargo:
 
 ```bash
-cargo build --locked --release
-install -Dm755 target/release/ssh-tui-rs ~/.local/bin/ssh-tui-rs
+cargo install --locked --path .
 ```
 
-Alternatively, let Cargo build and install it to the same location:
+Cargo installs binaries to `~/.cargo/bin` on Linux and
+`%USERPROFILE%\.cargo\bin` on Windows by default. Make sure that directory is
+included in `PATH`.
 
-```bash
-cargo install --locked --path . --root ~/.local
-```
-
-Make sure `~/.local/bin` is in `PATH`. Add this to your shell configuration,
-such as `~/.bashrc` or `~/.zshrc`, if necessary:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-By default, `ssh-tui-rs` reads `~/.ssh/config`.
+By default, `ssh-tui-rs` reads the current user's OpenSSH configuration:
+`~/.ssh/config` on Linux or `%USERPROFILE%\.ssh\config` on Windows.
 
 ```bash
 ssh-tui-rs
@@ -79,10 +76,10 @@ folders marked with `@expanded` are checked at startup. The probe is a direct
 TCP connection to the effective `HostName` and `Port`; proxy-only hosts may
 therefore appear unreachable.
 
-Linux release artifacts are built when a `v*` or `release-*` tag is pushed.
-The `linux-x86_64-glibc` artifact uses the standard GNU C library. Use the
-`linux-x86_64-musl` artifact for a statically linked binary that does not
-depend on the host's glibc version.
+Linux and Windows release artifacts are built when a `v*` or `release-*` tag
+is pushed. The `linux-x86_64-glibc` artifact uses the standard GNU C library;
+the `linux-x86_64-musl` artifact is statically linked and does not depend on
+the host's glibc version. Windows releases are provided as an x86_64 `.exe`.
 
 ## Config Examples
 
