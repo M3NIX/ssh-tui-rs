@@ -124,12 +124,12 @@ impl App {
             .iter()
             .filter_map(|node_id| match app.nodes[*node_id].kind {
                 NodeKind::Host(host_index) => Some(host_index),
-                NodeKind::Root | NodeKind::Folder => None,
+                NodeKind::Root | NodeKind::Group => None,
             })
             .collect::<Vec<_>>();
         app.check_host_indices(ungrouped_hosts);
-        for folder_id in initially_expanded {
-            app.check_hosts_below(folder_id);
+        for group_id in initially_expanded {
+            app.check_hosts_below(group_id);
         }
         app
     }
@@ -146,18 +146,18 @@ impl App {
 
         let mut current = match self.nodes[node_id].kind {
             NodeKind::Root => None,
-            NodeKind::Folder => Some(node_id),
+            NodeKind::Group => Some(node_id),
             NodeKind::Host(_) => self.nodes[node_id].parent,
         };
         let mut highest_newly_expanded = None;
-        while let Some(folder_id) = current {
-            if folder_id == self.root_id {
+        while let Some(group_id) = current {
+            if group_id == self.root_id {
                 break;
             }
-            if self.expanded.insert(folder_id) {
-                highest_newly_expanded = Some(folder_id);
+            if self.expanded.insert(group_id) {
+                highest_newly_expanded = Some(group_id);
             }
-            current = self.nodes[folder_id].parent;
+            current = self.nodes[group_id].parent;
         }
 
         self.search.clear();
@@ -165,8 +165,8 @@ impl App {
         self.rebuild_visible();
         self.select_node(node_id);
 
-        if let Some(folder_id) = highest_newly_expanded {
-            self.check_hosts_below(folder_id);
+        if let Some(group_id) = highest_newly_expanded {
+            self.check_hosts_below(group_id);
         }
     }
 
@@ -200,11 +200,11 @@ impl App {
         self.keep_selection_visible();
     }
 
-    pub fn toggle_selected_folder(&mut self) {
+    pub fn toggle_selected_group(&mut self) {
         let Some(node_id) = self.selected_node_id() else {
             return;
         };
-        if !matches!(self.nodes[node_id].kind, NodeKind::Folder | NodeKind::Root) {
+        if !matches!(self.nodes[node_id].kind, NodeKind::Group | NodeKind::Root) {
             return;
         }
         if self.expanded.insert(node_id) {
@@ -219,7 +219,7 @@ impl App {
         let Some(node_id) = self.selected_node_id() else {
             return;
         };
-        if matches!(self.nodes[node_id].kind, NodeKind::Folder | NodeKind::Root)
+        if matches!(self.nodes[node_id].kind, NodeKind::Group | NodeKind::Root)
             && self.expanded.contains(&node_id)
         {
             self.expanded.remove(&node_id);
@@ -233,7 +233,7 @@ impl App {
         let Some(node_id) = self.selected_node_id() else {
             return;
         };
-        if matches!(self.nodes[node_id].kind, NodeKind::Folder | NodeKind::Root) {
+        if matches!(self.nodes[node_id].kind, NodeKind::Group | NodeKind::Root) {
             if self.expanded.insert(node_id) {
                 self.check_hosts_below(node_id);
             }
@@ -275,9 +275,9 @@ impl App {
         if selected
             && self
                 .selected_node_id()
-                .is_some_and(|node_id| matches!(self.nodes[node_id].kind, NodeKind::Folder))
+                .is_some_and(|node_id| matches!(self.nodes[node_id].kind, NodeKind::Group))
         {
-            self.toggle_selected_folder();
+            self.toggle_selected_group();
         }
         selected
     }
@@ -549,7 +549,7 @@ impl App {
     fn collect_host_indices(&self, node_id: usize, host_indices: &mut Vec<usize>) {
         for child in &self.nodes[node_id].children {
             match self.nodes[*child].kind {
-                NodeKind::Root | NodeKind::Folder => {
+                NodeKind::Root | NodeKind::Group => {
                     self.collect_host_indices(*child, host_indices);
                 }
                 NodeKind::Host(host_index) => host_indices.push(host_index),
@@ -662,7 +662,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tree_contains_nested_folders_and_hosts() {
+    fn tree_contains_nested_groups_and_hosts() {
         let config = SshConfig {
             source: PathBuf::from("config"),
             groups: vec![GroupEntry {
@@ -730,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn revealing_search_results_expands_and_preserves_folder_and_host_selection() {
+    fn revealing_search_results_expands_and_preserves_group_and_host_selection() {
         let config = SshConfig {
             source: PathBuf::from("config"),
             groups: vec![GroupEntry {
@@ -751,23 +751,23 @@ mod tests {
             }],
         };
 
-        let mut folder_app = App::with_network_checks(config.clone(), false);
-        folder_app.start_search();
+        let mut group_app = App::with_network_checks(config.clone(), false);
+        group_app.start_search();
         for character in "prod".chars() {
-            folder_app.push_search(character);
+            group_app.push_search(character);
         }
-        folder_app.select_next();
-        folder_app.reveal_search_selection();
+        group_app.select_next();
+        group_app.reveal_search_selection();
 
-        assert_eq!(folder_app.input_mode, InputMode::Normal);
-        assert!(folder_app.search.is_empty());
-        assert_eq!(folder_app.selected_node().unwrap().name, "Prod");
-        assert_eq!(folder_app.expanded.len(), 2);
+        assert_eq!(group_app.input_mode, InputMode::Normal);
+        assert!(group_app.search.is_empty());
+        assert_eq!(group_app.selected_node().unwrap().name, "Prod");
+        assert_eq!(group_app.expanded.len(), 2);
         assert!(
-            folder_app
+            group_app
                 .visible
                 .iter()
-                .any(|row| folder_app.nodes[row.node_id].name == "prod-api")
+                .any(|row| group_app.nodes[row.node_id].name == "prod-api")
         );
 
         let mut host_app = App::with_network_checks(config, false);
@@ -783,12 +783,12 @@ mod tests {
         assert!(host_app.search.is_empty());
         assert_eq!(host_app.selected_host().unwrap().alias, "prod-api");
         let mut parent = host_app.selected_node().unwrap().parent;
-        while let Some(folder_id) = parent {
-            if folder_id == host_app.root_id {
+        while let Some(group_id) = parent {
+            if group_id == host_app.root_id {
                 break;
             }
-            assert!(host_app.expanded.contains(&folder_id));
-            parent = host_app.nodes[folder_id].parent;
+            assert!(host_app.expanded.contains(&group_id));
+            parent = host_app.nodes[group_id].parent;
         }
     }
 
@@ -849,7 +849,7 @@ mod tests {
         let mut app = App::with_network_checks(config, false);
         assert_eq!(app.host_reachability(0), HostReachability::Reachable);
 
-        app.toggle_selected_folder();
+        app.toggle_selected_group();
 
         assert_eq!(app.host_reachability(0), HostReachability::Reachable);
         assert!(app.reachability.is_empty());
@@ -883,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn click_toggles_folder_rows() {
+    fn click_toggles_group_rows() {
         let config = SshConfig {
             source: PathBuf::from("config"),
             groups: vec![GroupEntry {

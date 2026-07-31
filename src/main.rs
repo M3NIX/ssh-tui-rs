@@ -184,10 +184,10 @@ fn run_loop(
                             if app.selected_host().is_some() {
                                 activate_selected_host(terminal, app, false)?;
                             } else {
-                                app.toggle_selected_folder();
+                                app.toggle_selected_group();
                             }
                         }
-                        KeyCode::Char(' ') => app.toggle_selected_folder(),
+                        KeyCode::Char(' ') => app.toggle_selected_group(),
                         _ => {}
                     }
                 }

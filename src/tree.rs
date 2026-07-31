@@ -5,7 +5,7 @@ use crate::{GroupEntry, SshConfig};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
     Root,
-    Folder,
+    Group,
     Host(usize),
 }
 
@@ -40,13 +40,13 @@ pub(crate) fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize
     let root_id = 0;
     let mut expanded = HashSet::new();
     let mut initially_expanded = Vec::new();
-    let mut folders: HashMap<Vec<String>, usize> = HashMap::new();
+    let mut groups: HashMap<Vec<String>, usize> = HashMap::new();
 
     for group in &config.groups {
-        let folder_id = ensure_folder_path(&mut nodes, &mut folders, root_id, group);
+        let group_id = ensure_group_path(&mut nodes, &mut groups, root_id, group);
         if group.expanded_by_default {
-            initially_expanded.push(folder_id);
-            expand_with_ancestors(folder_id, root_id, &nodes, &mut expanded);
+            initially_expanded.push(group_id);
+            expand_with_ancestors(group_id, root_id, &nodes, &mut expanded);
         }
     }
 
@@ -61,7 +61,7 @@ pub(crate) fn build_tree(config: &SshConfig) -> (Vec<Node>, usize, HashSet<usize
                 source: host.source.clone(),
                 line: host.line,
             };
-            ensure_folder_path(&mut nodes, &mut folders, root_id, &synthetic)
+            ensure_group_path(&mut nodes, &mut groups, root_id, &synthetic)
         };
         let id = nodes.len();
         let search_fields = [
@@ -106,9 +106,9 @@ fn expand_with_ancestors(
     }
 }
 
-fn ensure_folder_path(
+fn ensure_group_path(
     nodes: &mut Vec<Node>,
-    folders: &mut HashMap<Vec<String>, usize>,
+    groups: &mut HashMap<Vec<String>, usize>,
     root_id: usize,
     group: &GroupEntry,
 ) -> usize {
@@ -117,7 +117,7 @@ fn ensure_folder_path(
 
     for segment in &group.path {
         path.push(segment.clone());
-        if let Some(id) = folders.get(&path) {
+        if let Some(id) = groups.get(&path) {
             parent = *id;
             continue;
         }
@@ -143,11 +143,11 @@ fn ensure_folder_path(
             description,
             parent: Some(parent),
             children: Vec::new(),
-            kind: NodeKind::Folder,
+            kind: NodeKind::Group,
             search_fields,
         });
         nodes[parent].children.push(id);
-        folders.insert(path.clone(), id);
+        groups.insert(path.clone(), id);
         parent = id;
     }
 
@@ -174,7 +174,7 @@ fn sort_children(node_id: usize, nodes: &mut [Node]) {
 
 fn kind_rank(kind: &NodeKind) -> u8 {
     match kind {
-        NodeKind::Root | NodeKind::Folder => 0,
+        NodeKind::Root | NodeKind::Group => 0,
         NodeKind::Host(_) => 1,
     }
 }

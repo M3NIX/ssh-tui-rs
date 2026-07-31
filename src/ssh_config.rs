@@ -719,7 +719,7 @@ Host after-include
 Host colon-form
 
 # @folder Legacy
-Host folder-keyword
+Host legacy-keyword
 
 # @group Legacy | Pipe description
 Host pipe-description

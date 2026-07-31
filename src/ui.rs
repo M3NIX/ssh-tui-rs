@@ -14,6 +14,7 @@ use crate::{App, ConnectionFailure, HostReachability, Node, NodeKind, VisibleRow
 
 const HOST_DOT: &str = "● ";
 const HOST_TABLE_COLUMN_SPACING: u16 = 2;
+const FIELD_LABEL_WIDTH: usize = 14;
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let root = frame.area();
@@ -116,7 +117,7 @@ fn render_tree_row(app: &App, row: &VisibleRow, selected: bool) -> Line<'static>
 
     let (marker, marker_style, name_style) = match node.kind {
         NodeKind::Root => ("  ", Style::default(), Style::default().fg(Color::White)),
-        NodeKind::Folder => {
+        NodeKind::Group => {
             let marker = if app.expanded.contains(&node.id) || !app.search.is_empty() {
                 "▾ "
             } else {
@@ -203,7 +204,7 @@ fn render_details(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     };
 
     match node.kind {
-        NodeKind::Root | NodeKind::Folder => render_folder_details(frame, app, node, area),
+        NodeKind::Root | NodeKind::Group => render_group_details(frame, app, node, area),
         NodeKind::Host(host_index) => render_host_details(
             frame,
             &app.config.hosts[host_index],
@@ -285,9 +286,9 @@ fn render_terminal_selection(
     }
 }
 
-fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Rect) {
+fn render_group_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Rect) {
     let path = node_path(app, node.id);
-    let (folders, hosts) = count_descendants(app, node.id);
+    let (groups, hosts) = count_descendants(app, node.id);
     let mut overview = vec![
         Line::from(fuzzy_highlighted(
             &node.name,
@@ -305,8 +306,8 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
     if let Some(description) = &node.description {
         overview.push(search_field_line("Description", description, &app.search));
     }
-    if folders > 0 {
-        overview.push(field_line("Subfolders", &folders.to_string()));
+    if groups > 0 {
+        overview.push(field_line("Subgroups", &groups.to_string()));
     }
 
     let overview_height = section_height(&overview, area.width);
@@ -317,22 +318,22 @@ fn render_folder_details(frame: &mut Frame<'_>, app: &App, node: &Node, area: Re
 
     frame.render_widget(
         Paragraph::new(overview)
-            .block(Block::default().borders(Borders::ALL).title("Folder"))
+            .block(Block::default().borders(Borders::ALL).title("Group"))
             .wrap(Wrap { trim: false }),
         panes[0],
     );
 
-    let hosts_in_folder = descendant_hosts(app, node.id);
+    let hosts_in_group = descendant_hosts(app, node.id);
     let selected_path = node_path_parts(app, node.id);
-    let column_widths = folder_column_widths(&hosts_in_folder, &selected_path, panes[1].width);
-    let rows = hosts_in_folder
+    let column_widths = group_column_widths(&hosts_in_group, &selected_path, panes[1].width);
+    let rows = hosts_in_group
         .into_iter()
-        .map(|(_, host)| folder_host_row(host, &selected_path, app.search.trim()))
+        .map(|(_, host)| group_host_row(host, &selected_path, app.search.trim()))
         .collect::<Vec<_>>();
     frame.render_widget(
         Table::new(rows, column_widths)
             .header(
-                Row::new(["Alias", "HostName", "Description"]).style(
+                Row::new(["Alias", "HostName", "User", "Description"]).style(
                     Style::default()
                         .fg(Color::DarkGray)
                         .add_modifier(Modifier::BOLD),
@@ -593,7 +594,7 @@ fn search_field_line(label: &str, value: &str, query: &str) -> Line<'static> {
 
 fn field_line_with_spans(label: &str, value: Vec<Span<'static>>) -> Line<'static> {
     let mut spans = vec![Span::styled(
-        format!("{label:<12}"),
+        format!("{label:<FIELD_LABEL_WIDTH$}"),
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::BOLD),
@@ -624,7 +625,7 @@ fn descendant_hosts(app: &App, node_id: usize) -> Vec<(usize, &crate::HostEntry)
     fn collect<'a>(app: &'a App, node_id: usize, hosts: &mut Vec<(usize, &'a crate::HostEntry)>) {
         for child in &app.nodes[node_id].children {
             match app.nodes[*child].kind {
-                NodeKind::Folder | NodeKind::Root => collect(app, *child, hosts),
+                NodeKind::Group | NodeKind::Root => collect(app, *child, hosts),
                 NodeKind::Host(host_index) => {
                     hosts.push((host_index, &app.config.hosts[host_index]));
                 }
@@ -658,15 +659,15 @@ fn descendant_hosts(app: &App, node_id: usize) -> Vec<(usize, &crate::HostEntry)
     hosts
 }
 
-fn folder_column_widths(
+fn group_column_widths(
     hosts: &[(usize, &crate::HostEntry)],
     selected_path: &[String],
     area_width: u16,
-) -> [Constraint; 3] {
-    let available = area_width.saturating_sub(2 + HOST_TABLE_COLUMN_SPACING.saturating_mul(2));
+) -> [Constraint; 4] {
+    let available = area_width.saturating_sub(2 + HOST_TABLE_COLUMN_SPACING.saturating_mul(3));
     let natural_alias_width = hosts
         .iter()
-        .map(|(_, host)| folder_alias(host, selected_path).width())
+        .map(|(_, host)| group_alias(host, selected_path).width())
         .max()
         .unwrap_or_default()
         .max("Alias".len());
@@ -677,22 +678,34 @@ fn folder_column_widths(
         .max()
         .unwrap_or_default()
         .max("HostName".len());
+    let natural_user_width = hosts
+        .iter()
+        .filter_map(|(_, host)| host.resolved.user.as_deref())
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or_default()
+        .max("User".len());
     let alias_width = u16::try_from(natural_alias_width)
         .unwrap_or(u16::MAX)
-        .min(available.saturating_mul(2) / 5);
+        .min(available.saturating_mul(3) / 10);
     let hostname_width = u16::try_from(natural_hostname_width)
         .unwrap_or(u16::MAX)
         .min(available.saturating_mul(3) / 10);
+    let user_width = u16::try_from(natural_user_width)
+        .unwrap_or(u16::MAX)
+        .min(available / 5);
 
     [
         Constraint::Length(alias_width),
         Constraint::Length(hostname_width),
+        Constraint::Length(user_width),
         Constraint::Fill(1),
     ]
 }
 
-fn folder_host_row(host: &crate::HostEntry, selected_path: &[String], query: &str) -> Row<'static> {
+fn group_host_row(host: &crate::HostEntry, selected_path: &[String], query: &str) -> Row<'static> {
     let host_name = host.resolved.host_name.as_deref().unwrap_or_default();
+    let user = host.resolved.user.as_deref().unwrap_or_default();
     let description = host.description.as_deref().unwrap_or_default();
     let relative_group = host
         .group_path
@@ -723,6 +736,11 @@ fn folder_host_row(host: &crate::HostEntry, selected_path: &[String], query: &st
             Style::default().fg(Color::White),
         ))),
         Cell::from(Line::from(fuzzy_highlighted(
+            user,
+            query,
+            Style::default().fg(Color::White),
+        ))),
+        Cell::from(Line::from(fuzzy_highlighted(
             description,
             query,
             Style::default().fg(Color::DarkGray),
@@ -730,7 +748,7 @@ fn folder_host_row(host: &crate::HostEntry, selected_path: &[String], query: &st
     ])
 }
 
-fn folder_alias(host: &crate::HostEntry, selected_path: &[String]) -> String {
+fn group_alias(host: &crate::HostEntry, selected_path: &[String]) -> String {
     let relative_group = host
         .group_path
         .strip_prefix(selected_path)
@@ -779,21 +797,21 @@ fn node_path_parts(app: &App, node_id: usize) -> Vec<String> {
 }
 
 fn count_descendants(app: &App, node_id: usize) -> (usize, usize) {
-    let mut folders = 0;
+    let mut groups = 0;
     let mut hosts = 0;
     for child in &app.nodes[node_id].children {
         match app.nodes[*child].kind {
-            NodeKind::Folder => {
-                folders += 1;
-                let (sub_folders, sub_hosts) = count_descendants(app, *child);
-                folders += sub_folders;
+            NodeKind::Group => {
+                groups += 1;
+                let (subgroups, sub_hosts) = count_descendants(app, *child);
+                groups += subgroups;
                 hosts += sub_hosts;
             }
             NodeKind::Host(_) => hosts += 1,
             NodeKind::Root => {}
         }
     }
-    (folders, hosts)
+    (groups, hosts)
 }
 
 #[cfg(test)]
@@ -813,6 +831,25 @@ mod tests {
             .filter(|cell| cell.bg == Color::Yellow)
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn detail_field_values_use_consistent_label_spacing() {
+        let path = field_line("Path", "Work");
+        let description = field_line("Description", "All work hosts");
+        let path = path
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let description = description
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(path, "Path          Work");
+        assert_eq!(description, "Description   All work hosts");
     }
 
     #[test]
@@ -1051,7 +1088,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_folder_details_group_hosts_by_subfolder_then_alias() {
+    fn collapsed_group_details_list_hosts_by_subgroup_then_alias() {
         let config = crate::SshConfig {
             source: "config".into(),
             groups: vec![GroupEntry {
@@ -1071,6 +1108,7 @@ mod tests {
                     options: BTreeMap::new(),
                     resolved: ResolvedHost {
                         host_name: Some("db.internal".into()),
+                        user: Some("postgres".into()),
                         ..ResolvedHost::default()
                     },
                 },
@@ -1083,6 +1121,7 @@ mod tests {
                     options: BTreeMap::new(),
                     resolved: ResolvedHost {
                         host_name: Some("api.internal".into()),
+                        user: Some("deploy".into()),
                         ..ResolvedHost::default()
                     },
                 },
@@ -1123,13 +1162,17 @@ mod tests {
         assert!(rendered.contains("Hosts (4)"));
         assert!(rendered.contains("Alias"));
         assert!(rendered.contains("HostName"));
+        assert!(rendered.contains("User"));
         assert!(rendered.contains("Description"));
         assert!(rendered.contains("alpha-api"));
         assert!(rendered.contains("zeta-db"));
+        assert!(rendered.contains("deploy"));
+        assert!(rendered.contains("postgres"));
         assert!(rendered.contains("Primary database"));
+        assert!(rendered.contains("Group"));
         assert!(!rendered.contains('●'));
-        let folder_id = app.visible[0].node_id;
-        let aliases = descendant_hosts(&app, folder_id)
+        let group_id = app.visible[0].node_id;
+        let aliases = descendant_hosts(&app, group_id)
             .into_iter()
             .map(|(_, host)| host.alias.as_str())
             .collect::<Vec<_>>();
@@ -1151,6 +1194,7 @@ mod tests {
             .expect("zeta-db row");
         assert!(zeta_row.contains("Databases/zeta-db"));
         assert_eq!(alpha_row.find("api.internal"), zeta_row.find("db.internal"));
+        assert_eq!(alpha_row.find("deploy"), zeta_row.find("postgres"));
         assert_eq!(
             alpha_row.find("Public API"),
             zeta_row.find("Primary database")
