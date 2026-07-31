@@ -63,8 +63,7 @@ typing, click folders to toggle them, and double-click hosts to connect.
 
 Use `Alt+Enter` for an inline session, or `--embedded-ssh` to make inline
 sessions the default. The terminal runs in the details pane and keeps the tree
-visible. Drag over text with the mouse to copy it; Ctrl+Shift+C also copies the
-highlighted text when the outer terminal forwards that shortcut.
+visible. Drag over text to select and copy it on mouse release.
 
 Reachability checks run when folders are unfolded. Ungrouped hosts and hosts in
 folders marked with `@expanded` are checked at startup. The probe is a direct

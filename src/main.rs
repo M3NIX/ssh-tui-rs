@@ -118,13 +118,6 @@ fn run_loop(
                         continue;
                     }
 
-                    if is_copy_shortcut(&key)
-                        && let Some(text) = app.embedded_selection_text()
-                    {
-                        copy_to_clipboard(terminal, clipboard, &text)?;
-                        continue;
-                    }
-
                     if app.embedded_session_failed() {
                         match key.code {
                             KeyCode::Char('q') => break,
@@ -275,12 +268,6 @@ fn keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
 
 fn is_inline_shortcut(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Enter
-}
-
-fn is_copy_shortcut(key: &KeyEvent) -> bool {
-    key.modifiers
-        .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-        && matches!(key.code, KeyCode::Char('c' | 'C'))
 }
 
 fn handle_embedded_mouse(
@@ -554,18 +541,6 @@ mod tests {
         assert!(!is_inline_shortcut(&KeyEvent::new(
             KeyCode::Enter,
             KeyModifiers::NONE
-        )));
-    }
-
-    #[test]
-    fn recognizes_ctrl_shift_c_for_selected_text() {
-        assert!(is_copy_shortcut(&KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT
-        )));
-        assert!(!is_copy_shortcut(&KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::CONTROL
         )));
     }
 
