@@ -535,9 +535,12 @@ impl App {
             if self.host_reachability(host_index) == HostReachability::Checking {
                 continue;
             }
+            let host = &self.config.hosts[host_index];
+            if !host.resolved.proxy_jump.is_empty() {
+                continue;
+            }
             self.reachability
                 .insert(host_index, HostReachability::Checking);
-            let host = &self.config.hosts[host_index];
             targets.push(CheckTarget {
                 host_index,
                 host: host
@@ -1074,5 +1077,72 @@ mod tests {
             vec!["alpha", "beta"]
         );
         assert_eq!(app.status, "2 hosts");
+    }
+
+    #[test]
+    fn direct_host_without_proxyjump_is_queued_for_tcp_check() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: Vec::new(),
+            hosts: vec![HostEntry {
+                alias: "xxx".into(),
+                description: None,
+                group_path: Vec::new(),
+                source: PathBuf::from("config"),
+                line: 1,
+                options: BTreeMap::new(),
+                resolved: ResolvedHost {
+                    host_name: Some("my-xxx-server".into()),
+                    port: Some(33),
+                    ..ResolvedHost::default()
+                },
+            }],
+        };
+
+        let app = App::new(config);
+        assert_eq!(app.host_reachability(0), HostReachability::Checking);
+    }
+
+    #[test]
+    fn host_with_proxyjump_stays_unchecked() {
+        let config = SshConfig {
+            source: PathBuf::from("config"),
+            groups: Vec::new(),
+            hosts: vec![
+                HostEntry {
+                    alias: "xxx".into(),
+                    description: None,
+                    group_path: Vec::new(),
+                    source: PathBuf::from("config"),
+                    line: 1,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost {
+                        host_name: Some("my-xxx-server".into()),
+                        port: Some(33),
+                        ..ResolvedHost::default()
+                    },
+                },
+                HostEntry {
+                    alias: "yyy".into(),
+                    description: None,
+                    group_path: Vec::new(),
+                    source: PathBuf::from("config"),
+                    line: 5,
+                    options: BTreeMap::new(),
+                    resolved: ResolvedHost {
+                        host_name: Some("my-yyy-server".into()),
+                        port: Some(44),
+                        proxy_jump: vec!["xxx".into()],
+                        ..ResolvedHost::default()
+                    },
+                },
+            ],
+        };
+
+        let app = App::new(config);
+        // Direct host (index 0) is queued for TCP check.
+        assert_eq!(app.host_reachability(0), HostReachability::Checking);
+        // ProxyJump host (index 1) must never be queued and must stay Unchecked.
+        assert_eq!(app.host_reachability(1), HostReachability::Unchecked);
     }
 }
