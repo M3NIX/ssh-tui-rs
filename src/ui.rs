@@ -481,6 +481,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ("x", "Close"),
             ("Space", "Fold"),
             ("/", "Search"),
+            ("r", "Reload"),
             ("q", "Quit"),
         ]
         .as_slice()
@@ -489,6 +490,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ("Enter", "SSH"),
             ("Space", "Fold"),
             ("/", "Search"),
+            ("r", "Reload"),
             ("q", "Quit"),
         ]
         .as_slice()

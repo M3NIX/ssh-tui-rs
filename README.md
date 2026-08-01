@@ -73,6 +73,7 @@ Options:
 | `Enter` | Connect to a host or toggle a group |
 | `Alt+Enter` | Open the selected host in the inline terminal |
 | `/` | Enter search mode |
+| `r` | Reload SSH config from disk |
 | `F5` | Switch between the tree and an embedded SSH session |
 | `x` | Close an embedded session while the tree is focused |
 | `q` | Quit |
