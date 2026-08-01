@@ -94,8 +94,8 @@ fn run_loop(
         terminal.draw(|frame| ui::draw(frame, app))?;
         if let Err(error) = app.sync_embedded_terminal_size() {
             let alias = app
-                .embedded_session
-                .as_ref()
+                .embedded_sessions
+                .get(app.active_tab)
                 .map(|session| session.alias.clone())
                 .unwrap_or_else(|| "SSH".to_string());
             app.close_embedded_session();
@@ -134,7 +134,7 @@ fn run_loop(
 
                     if key.kind == KeyEventKind::Press
                         && key.code == KeyCode::F(5)
-                        && app.embedded_session_running()
+                        && app.has_embedded_sessions()
                     {
                         app.toggle_embedded_focus();
                         continue;
@@ -143,6 +143,24 @@ fn run_loop(
                     if app.embedded_terminal_focused() {
                         app.send_embedded_key(key)?;
                         continue;
+                    }
+
+                    // Tab switching: Alt+←/→ or Alt+h/l when tree is focused.
+                    if app.tab_count() > 1
+                        && key.kind == KeyEventKind::Press
+                        && key.modifiers.contains(KeyModifiers::ALT)
+                    {
+                        match key.code {
+                            KeyCode::Right | KeyCode::Char('l') => {
+                                app.next_tab();
+                                continue;
+                            }
+                            KeyCode::Left | KeyCode::Char('h') => {
+                                app.prev_tab();
+                                continue;
+                            }
+                            _ => {}
+                        }
                     }
 
                     if app.input_mode == InputMode::Search {
@@ -172,7 +190,7 @@ fn run_loop(
                         continue;
                     }
 
-                    if app.embedded_session_running() && key.code == KeyCode::Char('x') {
+                    if app.has_embedded_sessions() && key.code == KeyCode::Char('x') {
                         app.close_embedded_session();
                         continue;
                     }
@@ -217,7 +235,7 @@ fn run_loop(
                         continue;
                     }
 
-                    if app.embedded_session_running()
+                    if app.has_embedded_sessions()
                         && app.details_contains(mouse.column, mouse.row)
                     {
                         app.focus_embedded_terminal();
@@ -225,7 +243,7 @@ fn run_loop(
                         last_host_click = None;
                         continue;
                     }
-                    if app.embedded_session_running() {
+                    if app.has_embedded_sessions() {
                         app.focus_tree();
                     }
 
@@ -333,9 +351,7 @@ fn activate_selected_host(
     app: &mut App,
     force_embedded: bool,
 ) -> Result<()> {
-    if app.embedded_session_running() {
-        app.focus_embedded_terminal();
-    } else if force_embedded || app.embedded_ssh_enabled() {
+    if force_embedded || app.embedded_ssh_enabled() {
         if let Err(error) = app.start_embedded_session() {
             let alias = app
                 .selected_host()
@@ -347,8 +363,10 @@ fn activate_selected_host(
                 exit_status: None,
             });
         }
-    } else {
+    } else if !app.has_embedded_sessions() {
         connect_selected_host(terminal, app)?;
+    } else {
+        app.focus_embedded_terminal();
     }
     Ok(())
 }
