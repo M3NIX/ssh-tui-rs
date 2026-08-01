@@ -568,6 +568,14 @@ impl App {
             .filter(|text| !text.is_empty())
     }
 
+    pub fn active_host_description_for_alias(&self, alias: &str) -> Option<&str> {
+        self.config
+            .hosts
+            .iter()
+            .find(|host| host.alias == alias)
+            .and_then(|host| host.description.as_deref())
+    }
+
     pub fn show_connection_failure(&mut self, failure: ConnectionFailure) {
         self.connection_failure = Some(failure);
     }

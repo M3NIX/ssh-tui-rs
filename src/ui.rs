@@ -235,8 +235,14 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
 
     let block_title = if app.tab_count() > 1 {
-        // The tab bar already shows each session name; keep the heading generic.
-        Span::styled(" SSH ", border_style)
+        Span::styled(
+            embedded_heading_title(
+                app.active_host_description_for_alias(&session.alias),
+                &session.alias,
+                exited.as_deref(),
+            ),
+            border_style,
+        )
     } else {
         Span::styled(title, border_style)
     };
@@ -317,6 +323,14 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
         if let Some((start, end)) = session.selection_range() {
             render_terminal_selection(frame, area, start, end);
         }
+    }
+
+    fn embedded_heading_title(description: Option<&str>, alias: &str, exit_status: Option<&str>) -> String {
+        let target = description.unwrap_or(alias);
+        exit_status.map_or_else(
+            || format!(" SSH: {target} "),
+            |status| format!(" SSH: {target} ({status}) "),
+        )
     }
 }
 
@@ -926,6 +940,22 @@ mod tests {
 
         assert_eq!(path, "Path          Work");
         assert_eq!(description, "Description   All work hosts");
+    }
+
+    #[test]
+    fn embedded_heading_uses_description_when_available() {
+        assert_eq!(
+            embedded_heading_title(Some("Primary database"), "db-prod", None),
+            " SSH: Primary database "
+        );
+    }
+
+    #[test]
+    fn embedded_heading_falls_back_to_alias_and_keeps_exit_status() {
+        assert_eq!(
+            embedded_heading_title(None, "db-prod", Some("exit 255")),
+            " SSH: db-prod (exit 255) "
+        );
     }
 
     #[test]
