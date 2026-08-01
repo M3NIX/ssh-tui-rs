@@ -238,7 +238,6 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Span::styled(
             embedded_heading_title(
                 app.active_host_description_for_alias(&session.alias),
-                &session.alias,
                 exited.as_deref(),
             ),
             border_style,
@@ -327,11 +326,13 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 }
 
-fn embedded_heading_title(description: Option<&str>, alias: &str, exit_status: Option<&str>) -> String {
-    let target = description.unwrap_or(alias);
+fn embedded_heading_title(description: Option<&str>, exit_status: Option<&str>) -> String {
+    let Some(description) = description else {
+        return " SSH ".to_string();
+    };
     exit_status.map_or_else(
-        || format!(" SSH: {target} "),
-        |status| format!(" SSH: {target} ({status}) "),
+        || format!(" SSH: {description} "),
+        |status| format!(" SSH: {description} ({status}) "),
     )
 }
 
@@ -946,16 +947,16 @@ mod tests {
     #[test]
     fn embedded_heading_uses_description_when_available() {
         assert_eq!(
-            embedded_heading_title(Some("Primary database"), "db-prod", None),
+            embedded_heading_title(Some("Primary database"), None),
             " SSH: Primary database "
         );
     }
 
     #[test]
-    fn embedded_heading_falls_back_to_alias_and_keeps_exit_status() {
+    fn embedded_heading_falls_back_to_plain_ssh_without_description() {
         assert_eq!(
-            embedded_heading_title(None, "db-prod", Some("exit 255")),
-            " SSH: db-prod (exit 255) "
+            embedded_heading_title(None, Some("exit 255")),
+            " SSH "
         );
     }
 
