@@ -234,10 +234,16 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
         |status| format!(" SSH: {} ({status}) ", session.alias),
     );
 
+    let block_title = if app.tab_count() > 1 {
+        // The tab bar already shows each session name; keep the heading generic.
+        Span::styled(" SSH ", border_style)
+    } else {
+        Span::styled(title, border_style)
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
-        .title(Span::styled(title, border_style));
+        .title(block_title);
 
     if app.tab_count() > 1 {
         // Multi-tab: render block frame, then split inner area into tab bar + terminal.
