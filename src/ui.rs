@@ -325,13 +325,14 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
     }
 
-    fn embedded_heading_title(description: Option<&str>, alias: &str, exit_status: Option<&str>) -> String {
-        let target = description.unwrap_or(alias);
-        exit_status.map_or_else(
-            || format!(" SSH: {target} "),
-            |status| format!(" SSH: {target} ({status}) "),
-        )
-    }
+}
+
+fn embedded_heading_title(description: Option<&str>, alias: &str, exit_status: Option<&str>) -> String {
+    let target = description.unwrap_or(alias);
+    exit_status.map_or_else(
+        || format!(" SSH: {target} "),
+        |status| format!(" SSH: {target} ({status}) "),
+    )
 }
 
 fn render_terminal_selection(
