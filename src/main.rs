@@ -140,13 +140,9 @@ fn run_loop(
                         continue;
                     }
 
-                    if app.embedded_terminal_focused() {
-                        app.send_embedded_key(key)?;
-                        continue;
-                    }
-
-                    // Tab switching: Alt+←/→ or Alt+h/l when tree is focused.
-                    if app.tab_count() > 1
+                    // Tab switching: Alt+←/→ or Alt+h/l when embedded session is focused.
+                    if app.embedded_terminal_focused()
+                        && app.tab_count() > 1
                         && key.kind == KeyEventKind::Press
                         && key.modifiers.contains(KeyModifiers::ALT)
                     {
@@ -161,6 +157,11 @@ fn run_loop(
                             }
                             _ => {}
                         }
+                    }
+
+                    if app.embedded_terminal_focused() {
+                        app.send_embedded_key(key)?;
+                        continue;
                     }
 
                     if app.input_mode == InputMode::Search {
@@ -238,6 +239,14 @@ fn run_loop(
                     if app.has_embedded_sessions()
                         && app.details_contains(mouse.column, mouse.row)
                     {
+                        // A left-click on the tab bar switches tabs; any other
+                        // event in the details pane is forwarded to the terminal.
+                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                            && app.click_embedded_tab(mouse.column, mouse.row)
+                        {
+                            last_host_click = None;
+                            continue;
+                        }
                         app.focus_embedded_terminal();
                         handle_embedded_mouse(terminal, app, clipboard, mouse)?;
                         last_host_click = None;

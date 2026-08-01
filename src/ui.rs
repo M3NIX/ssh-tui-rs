@@ -539,7 +539,6 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     } else if app.tab_count() > 1 {
         &[
             ("F5", "Terminal"),
-            ("Alt+←/→", "Tab"),
             ("x", "Close"),
             ("/", "Search"),
             ("r", "Reload"),

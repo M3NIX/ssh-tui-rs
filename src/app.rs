@@ -525,6 +525,40 @@ impl App {
         self.layout.details.contains(terminal_column, terminal_row)
     }
 
+    /// If `column` and `row` fall on the tab bar, switch to the tab under the
+    /// cursor and return `true`.  Returns `false` when the click is outside the
+    /// tab bar (or when there is only one session, i.e. no bar is rendered).
+    pub fn click_embedded_tab(&mut self, column: u16, row: u16) -> bool {
+        if self.embedded_sessions.len() <= 1 {
+            return false;
+        }
+        let inner = self.layout.details.inner();
+        // The tab bar occupies the first row of the inner area.
+        if row != inner.top {
+            return false;
+        }
+        if column < inner.left || column >= inner.left.saturating_add(inner.width) {
+            return false;
+        }
+        let col = column - inner.left;
+        // Walk through tabs to find the one under the cursor.
+        // Layout: label0 | label1 | label2 ...  (divider is 1 char wide)
+        let mut pos: u16 = 0;
+        for (i, session) in self.embedded_sessions.iter().enumerate() {
+            let label_len = if let Some(exit) = session.exit_label() {
+                format!(" {} ({exit}) ", session.alias).len() as u16
+            } else {
+                format!(" {} ", session.alias).len() as u16
+            };
+            if col < pos.saturating_add(label_len) {
+                self.active_tab = i;
+                return true;
+            }
+            pos = pos.saturating_add(label_len).saturating_add(1); // +1 for divider
+        }
+        false
+    }
+
     pub fn embedded_selection_text(&self) -> Option<String> {
         self.embedded_sessions
             .get(self.active_tab)
