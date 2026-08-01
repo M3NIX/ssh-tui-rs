@@ -71,11 +71,13 @@ Options:
 | `Space` | Fold/unfold the selected group |
 | `h`, `l`, `Left`, `Right` | Fold/unfold groups |
 | `Enter` | Connect to a host or toggle a group |
-| `Alt+Enter` | Open the selected host in the inline terminal |
+| `Alt+Enter` | Open the selected host in a new inline terminal tab |
 | `/` | Enter search mode |
 | `r` | Reload SSH config from disk |
-| `F5` | Switch between the tree and an embedded SSH session |
-| `x` | Close an embedded session while the tree is focused |
+| `F5` | Switch focus between the tree and the active embedded session |
+| `Alt+Left`, `Alt+h` | Switch to the previous tab (when multiple tabs are open) |
+| `Alt+Right`, `Alt+l` | Switch to the next tab (when multiple tabs are open) |
+| `x` | Close the active embedded session tab |
 | `q` | Quit |
 
 ### Search mode
@@ -91,8 +93,9 @@ Mouse scrolling and selection are supported. Click the search box to start
 typing, click groups to toggle them, and double-click hosts to connect.
 
 Use `Alt+Enter` for an inline session, or `--embedded-ssh` to make inline
-sessions the default. The terminal runs in the details pane and keeps the tree
-visible. Drag over text to select and copy it on mouse release.
+sessions the default. Each activation opens a new tab in the details pane while
+keeping the tree visible. Switch between tabs with `Alt+Left`/`Alt+Right` (or
+`Alt+h`/`Alt+l`). Drag over text to select and copy it on mouse release.
 
 Reachability checks run when groups are unfolded. Ungrouped hosts and hosts in
 groups marked with `@expanded` are checked at startup. The probe is a direct

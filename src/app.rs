@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     EmbeddedFocus, EmbeddedMouseAction, EmbeddedPoll, EmbeddedSession, HostEntry, HostReachability,
@@ -72,7 +73,8 @@ pub struct App {
     pub status: String,
     pub reachability: HashMap<usize, HostReachability>,
     pub connection_failure: Option<ConnectionFailure>,
-    pub embedded_session: Option<EmbeddedSession>,
+    pub embedded_sessions: Vec<EmbeddedSession>,
+    pub active_tab: usize,
     layout: InteractionLayout,
     embedded_ssh_enabled: bool,
     reachability_tracker: ReachabilityTracker,
@@ -109,7 +111,8 @@ impl App {
             status: String::new(),
             reachability: HashMap::new(),
             connection_failure: None,
-            embedded_session: None,
+            embedded_sessions: Vec::new(),
+            active_tab: 0,
             layout: InteractionLayout::default(),
             embedded_ssh_enabled,
             reachability_tracker: ReachabilityTracker::new(network_checks_enabled),
@@ -326,59 +329,67 @@ impl App {
     }
 
     pub fn start_embedded_session(&mut self) -> tastty::Result<()> {
-        if self.embedded_session.is_some() {
-            return Ok(());
-        }
         let Some(alias) = self.selected_host().map(|host| host.alias.clone()) else {
             return Ok(());
         };
         let (rows, cols) = self.embedded_terminal_size();
-        self.embedded_session = Some(EmbeddedSession::spawn_ssh(
-            &alias,
-            &self.config.source,
-            rows,
-            cols,
-        )?);
+        let session = EmbeddedSession::spawn_ssh(&alias, &self.config.source, rows, cols)?;
+        self.embedded_sessions.push(session);
+        self.active_tab = self.embedded_sessions.len() - 1;
         Ok(())
     }
 
     pub fn poll_embedded_session(&mut self) {
-        let update = self.embedded_session.as_mut().map(EmbeddedSession::poll);
-        if update == Some(EmbeddedPoll::Succeeded) {
-            self.embedded_session = None;
+        let mut i = 0;
+        while i < self.embedded_sessions.len() {
+            if self.embedded_sessions[i].poll() == EmbeddedPoll::Succeeded {
+                self.embedded_sessions.remove(i);
+                if self.embedded_sessions.is_empty() {
+                    self.active_tab = 0;
+                } else if self.active_tab >= self.embedded_sessions.len() {
+                    self.active_tab = self.embedded_sessions.len() - 1;
+                }
+            } else {
+                i += 1;
+            }
         }
     }
 
     pub fn sync_embedded_terminal_size(&mut self) -> tastty::Result<()> {
         let (rows, cols) = self.embedded_terminal_size();
-        if let Some(session) = &mut self.embedded_session
-            && session.is_running()
-        {
-            session.resize(rows, cols)?;
+        for session in &mut self.embedded_sessions {
+            if session.is_running() {
+                session.resize(rows, cols)?;
+            }
         }
         Ok(())
     }
 
-    pub fn embedded_session_running(&self) -> bool {
-        self.embedded_session
-            .as_ref()
-            .is_some_and(EmbeddedSession::is_running)
+    /// Returns `true` if any embedded session exists (running or failed).
+    pub fn has_embedded_sessions(&self) -> bool {
+        !self.embedded_sessions.is_empty()
     }
 
+    /// Returns `true` if at least one session is still running.
+    pub fn embedded_session_running(&self) -> bool {
+        self.embedded_sessions.iter().any(EmbeddedSession::is_running)
+    }
+
+    /// Returns `true` if the active tab has exited with an error.
     pub fn embedded_session_failed(&self) -> bool {
-        self.embedded_session
-            .as_ref()
+        self.embedded_sessions
+            .get(self.active_tab)
             .is_some_and(|session| !session.is_running())
     }
 
     pub fn embedded_terminal_focused(&self) -> bool {
-        self.embedded_session
-            .as_ref()
+        self.embedded_sessions
+            .get(self.active_tab)
             .is_some_and(|session| session.focus == EmbeddedFocus::Terminal)
     }
 
     pub fn focus_embedded_terminal(&mut self) {
-        if let Some(session) = &mut self.embedded_session
+        if let Some(session) = self.embedded_sessions.get_mut(self.active_tab)
             && session.is_running()
         {
             session.focus = EmbeddedFocus::Terminal;
@@ -386,13 +397,13 @@ impl App {
     }
 
     pub fn focus_tree(&mut self) {
-        if let Some(session) = &mut self.embedded_session {
+        if let Some(session) = self.embedded_sessions.get_mut(self.active_tab) {
             session.focus = EmbeddedFocus::Tree;
         }
     }
 
     pub fn toggle_embedded_focus(&mut self) {
-        if let Some(session) = &mut self.embedded_session
+        if let Some(session) = self.embedded_sessions.get_mut(self.active_tab)
             && session.is_running()
         {
             session.focus = match session.focus {
@@ -402,12 +413,43 @@ impl App {
         }
     }
 
+    /// Closes the active tab. Adjusts `active_tab` if needed.
     pub fn close_embedded_session(&mut self) {
-        self.embedded_session = None;
+        if self.embedded_sessions.is_empty() {
+            return;
+        }
+        self.embedded_sessions.remove(self.active_tab);
+        if self.embedded_sessions.is_empty() {
+            self.active_tab = 0;
+        } else if self.active_tab >= self.embedded_sessions.len() {
+            self.active_tab = self.embedded_sessions.len() - 1;
+        }
+    }
+
+    /// Returns the number of open tabs.
+    pub fn tab_count(&self) -> usize {
+        self.embedded_sessions.len()
+    }
+
+    /// Advance to the next tab, wrapping around.
+    pub fn next_tab(&mut self) {
+        if self.embedded_sessions.len() > 1 {
+            self.active_tab = (self.active_tab + 1) % self.embedded_sessions.len();
+        }
+    }
+
+    /// Go back to the previous tab, wrapping around.
+    pub fn prev_tab(&mut self) {
+        if self.embedded_sessions.len() > 1 {
+            self.active_tab = self
+                .active_tab
+                .checked_sub(1)
+                .unwrap_or(self.embedded_sessions.len() - 1);
+        }
     }
 
     pub fn send_embedded_key(&mut self, key: KeyEvent) -> tastty::Result<()> {
-        if let Some(session) = &mut self.embedded_session
+        if let Some(session) = self.embedded_sessions.get_mut(self.active_tab)
             && session.is_running()
         {
             session.clear_selection();
@@ -417,7 +459,7 @@ impl App {
     }
 
     pub fn send_embedded_paste(&mut self, text: &str) -> tastty::Result<()> {
-        if let Some(session) = &mut self.embedded_session
+        if let Some(session) = self.embedded_sessions.get_mut(self.active_tab)
             && session.is_running()
         {
             session.clear_selection();
@@ -427,7 +469,7 @@ impl App {
     }
 
     pub fn send_embedded_focus(&self, gained: bool) -> tastty::Result<()> {
-        if let Some(session) = &self.embedded_session
+        if let Some(session) = self.embedded_sessions.get(self.active_tab)
             && session.is_running()
         {
             session.send_focus(gained)?;
@@ -439,22 +481,25 @@ impl App {
         &mut self,
         mut mouse: MouseEvent,
     ) -> tastty::Result<EmbeddedMouseAction> {
-        let Some(session) = &mut self.embedded_session else {
-            return Ok(EmbeddedMouseAction::Ignored);
-        };
         let Area {
             left,
             top,
             width,
             height,
         } = self.layout.details.inner();
+        let tab_offset = self.tab_bar_rows();
+        let terminal_top = top.saturating_add(tab_offset);
+        let terminal_height = height.saturating_sub(tab_offset);
         if mouse.column < left
             || mouse.column >= left.saturating_add(width)
-            || mouse.row < top
-            || mouse.row >= top.saturating_add(height)
+            || mouse.row < terminal_top
+            || mouse.row >= terminal_top.saturating_add(terminal_height)
         {
             return Ok(EmbeddedMouseAction::Ignored);
         }
+        let Some(session) = self.embedded_sessions.get_mut(self.active_tab) else {
+            return Ok(EmbeddedMouseAction::Ignored);
+        };
 
         if !session.reports_mouse() {
             match mouse.kind {
@@ -473,7 +518,7 @@ impl App {
         }
 
         mouse.column -= left;
-        mouse.row -= top;
+        mouse.row -= terminal_top;
         session.handle_mouse(mouse)
     }
 
@@ -481,11 +526,54 @@ impl App {
         self.layout.details.contains(terminal_column, terminal_row)
     }
 
+    /// If `column` and `row` fall on the tab bar, switch to the tab under the
+    /// cursor and return `true`.  Returns `false` when the click is outside the
+    /// tab bar (or when there is only one session, i.e. no bar is rendered).
+    pub fn click_embedded_tab(&mut self, column: u16, row: u16) -> bool {
+        if self.embedded_sessions.len() <= 1 {
+            return false;
+        }
+        let inner = self.layout.details.inner();
+        // The tab bar occupies the first row of the inner area.
+        if row != inner.top {
+            return false;
+        }
+        if column < inner.left || column >= inner.left.saturating_add(inner.width) {
+            return false;
+        }
+        let col = column - inner.left;
+        // Walk through tabs to find the one under the cursor.
+        // Layout: label0 | label1 | label2 ...  (divider is 1 char wide)
+        let mut pos: u16 = 0;
+        for (i, session) in self.embedded_sessions.iter().enumerate() {
+            let label = if let Some(exit) = session.exit_label() {
+                format!(" {} ({exit}) ", session.alias)
+            } else {
+                format!(" {} ", session.alias)
+            };
+            let label_width = label.width() as u16;
+            if col < pos.saturating_add(label_width) {
+                self.active_tab = i;
+                return true;
+            }
+            pos = pos.saturating_add(label_width).saturating_add(1); // +1 for divider
+        }
+        false
+    }
+
     pub fn embedded_selection_text(&self) -> Option<String> {
-        self.embedded_session
-            .as_ref()
+        self.embedded_sessions
+            .get(self.active_tab)
             .and_then(EmbeddedSession::selected_text)
             .filter(|text| !text.is_empty())
+    }
+
+    pub fn active_host_description_for_alias(&self, alias: &str) -> Option<&str> {
+        self.config
+            .hosts
+            .iter()
+            .find(|host| host.alias == alias)
+            .and_then(|host| host.description.as_deref())
     }
 
     pub fn show_connection_failure(&mut self, failure: ConnectionFailure) {
@@ -515,8 +603,14 @@ impl App {
         (area.left, area.top, area.width, area.height)
     }
 
+    /// Number of rows consumed by the tab bar (1 when multiple sessions are open, 0 otherwise).
+    fn tab_bar_rows(&self) -> u16 {
+        if self.embedded_sessions.len() > 1 { 1 } else { 0 }
+    }
+
     fn embedded_terminal_size(&self) -> (u16, u16) {
         let (_, _, cols, rows) = self.embedded_terminal_area();
+        let rows = rows.saturating_sub(self.tab_bar_rows());
         (rows, cols)
     }
 

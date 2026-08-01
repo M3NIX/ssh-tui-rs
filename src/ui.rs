@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
+    widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap},
 };
 use tastty::widget::{Cursor, PseudoTerminal};
 use unicode_width::UnicodeWidthStr;
@@ -82,7 +82,7 @@ fn render_tree(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(
-            if app.embedded_session_running() && !app.embedded_terminal_focused() {
+            if app.has_embedded_sessions() && !app.embedded_terminal_focused() {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
@@ -189,7 +189,7 @@ fn highlighted_chars(value: &str, matched: &[usize], base: Style) -> Vec<Span<'s
 
 fn render_details(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     app.set_details_area(area.x, area.y, area.width, area.height);
-    if app.embedded_session.is_some() {
+    if app.has_embedded_sessions() {
         render_embedded_session(frame, app, area);
         return;
     }
@@ -216,7 +216,7 @@ fn render_details(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 }
 
 fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let Some(session) = &app.embedded_session else {
+    let Some(session) = app.embedded_sessions.get(app.active_tab) else {
         return;
     };
     let exited = session.exit_label();
@@ -229,27 +229,111 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let title = exited.map_or_else(
+    let title = exited.as_deref().map_or_else(
         || format!(" SSH: {} ", session.alias),
         |status| format!(" SSH: {} ({status}) ", session.alias),
     );
 
-    session.terminal.with_screen(|screen| {
-        let terminal = PseudoTerminal::new(screen)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .title(Span::styled(title, border_style)),
+    let block_title = if app.tab_count() > 1 {
+        Span::styled(
+            embedded_heading_title(
+                app.active_host_description_for_alias(&session.alias),
+                exited.as_deref(),
+            ),
+            border_style,
+        )
+    } else {
+        Span::styled(title, border_style)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(block_title);
+
+    if app.tab_count() > 1 {
+        // Multi-tab: render block frame, then split inner area into tab bar + terminal.
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let chunks = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Min(1),
+            ])
+            .split(inner);
+
+        let tab_titles: Vec<Line<'_>> = app
+            .embedded_sessions
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let label = if let Some(exit) = s.exit_label() {
+                    format!(" {} ({exit}) ", s.alias)
+                } else {
+                    format!(" {} ", s.alias)
+                };
+                let style = if i == app.active_tab {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else if !s.is_running() {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                Line::styled(label, style)
+            })
+            .collect();
+
+        let tabs = Tabs::new(tab_titles)
+            .select(app.active_tab)
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )
-            .cursor(Cursor::default().visibility(
-                session.is_running() && session.focus == crate::EmbeddedFocus::Terminal,
-            ));
-        frame.render_widget(terminal, area);
-    });
-    if let Some((start, end)) = session.selection_range() {
-        render_terminal_selection(frame, area, start, end);
+            .divider(Span::styled("|", Style::default().fg(Color::DarkGray)))
+            .padding("", "");
+        frame.render_widget(tabs, chunks[0]);
+
+        let terminal_area = chunks[1];
+        session.terminal.with_screen(|screen| {
+            let terminal_widget = PseudoTerminal::new(screen).cursor(
+                Cursor::default().visibility(
+                    session.is_running() && session.focus == crate::EmbeddedFocus::Terminal,
+                ),
+            );
+            frame.render_widget(terminal_widget, terminal_area);
+        });
+        if let Some((start, end)) = session.selection_range() {
+            render_terminal_selection(frame, terminal_area, start, end);
+        }
+    } else {
+        // Single session: original layout (terminal fills the full block).
+        session.terminal.with_screen(|screen| {
+            let terminal_widget = PseudoTerminal::new(screen)
+                .block(block)
+                .cursor(Cursor::default().visibility(
+                    session.is_running() && session.focus == crate::EmbeddedFocus::Terminal,
+                ));
+            frame.render_widget(terminal_widget, area);
+        });
+        if let Some((start, end)) = session.selection_range() {
+            render_terminal_selection(frame, area, start, end);
+        }
     }
+
+}
+
+fn embedded_heading_title(description: Option<&str>, exit_status: Option<&str>) -> String {
+    let Some(description) = description else {
+        return " SSH ".to_string();
+    };
+    exit_status.map_or_else(
+        || format!(" SSH: {description} "),
+        |status| format!(" SSH: {description} ({status}) "),
+    )
 }
 
 fn render_terminal_selection(
@@ -469,14 +553,22 @@ fn is_connection_option(key: &str) -> bool {
 
 fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(Clear, area);
-    let bindings = if app.embedded_session_failed() {
-        [("Enter/Esc", "Close")].as_slice()
+    let bindings: &[(&str, &str)] = if app.embedded_session_failed() {
+        &[("Enter/Esc", "Close")]
     } else if app.input_mode == crate::InputMode::Search {
-        [("Esc", "Clear"), ("Enter", "Reveal")].as_slice()
-    } else if app.embedded_session_running() && app.embedded_terminal_focused() {
-        [("F5", "Tree")].as_slice()
-    } else if app.embedded_session_running() {
-        [
+        &[("Esc", "Clear"), ("Enter", "Reveal")]
+    } else if app.embedded_terminal_focused() {
+        &[("F5", "Tree")]
+    } else if app.tab_count() > 1 {
+        &[
+            ("F5", "Terminal"),
+            ("x", "Close"),
+            ("/", "Search"),
+            ("r", "Reload"),
+            ("q", "Quit"),
+        ]
+    } else if app.has_embedded_sessions() {
+        &[
             ("F5", "Terminal"),
             ("x", "Close"),
             ("Space", "Fold"),
@@ -484,16 +576,14 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ("r", "Reload"),
             ("q", "Quit"),
         ]
-        .as_slice()
     } else {
-        [
+        &[
             ("Enter", "SSH"),
             ("Space", "Fold"),
             ("/", "Search"),
             ("r", "Reload"),
             ("q", "Quit"),
         ]
-        .as_slice()
     };
     let mut spans = Vec::new();
     if !app.status.is_empty() {
@@ -852,6 +942,22 @@ mod tests {
 
         assert_eq!(path, "Path          Work");
         assert_eq!(description, "Description   All work hosts");
+    }
+
+    #[test]
+    fn embedded_heading_uses_description_when_available() {
+        assert_eq!(
+            embedded_heading_title(Some("Primary database"), None),
+            " SSH: Primary database "
+        );
+    }
+
+    #[test]
+    fn embedded_heading_falls_back_to_plain_ssh_without_description() {
+        assert_eq!(
+            embedded_heading_title(None, Some("exit 255")),
+            " SSH "
+        );
     }
 
     #[test]
