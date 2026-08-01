@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     EmbeddedFocus, EmbeddedMouseAction, EmbeddedPoll, EmbeddedSession, HostEntry, HostReachability,
@@ -545,16 +546,17 @@ impl App {
         // Layout: label0 | label1 | label2 ...  (divider is 1 char wide)
         let mut pos: u16 = 0;
         for (i, session) in self.embedded_sessions.iter().enumerate() {
-            let label_len = if let Some(exit) = session.exit_label() {
-                format!(" {} ({exit}) ", session.alias).len() as u16
+            let label = if let Some(exit) = session.exit_label() {
+                format!(" {} ({exit}) ", session.alias)
             } else {
-                format!(" {} ", session.alias).len() as u16
+                format!(" {} ", session.alias)
             };
-            if col < pos.saturating_add(label_len) {
+            let label_width = label.width() as u16;
+            if col < pos.saturating_add(label_width) {
                 self.active_tab = i;
                 return true;
             }
-            pos = pos.saturating_add(label_len).saturating_add(1); // +1 for divider
+            pos = pos.saturating_add(label_width).saturating_add(1); // +1 for divider
         }
         false
     }

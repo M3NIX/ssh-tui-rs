@@ -288,7 +288,8 @@ fn render_embedded_session(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )
-            .divider(Span::styled("|", Style::default().fg(Color::DarkGray)));
+            .divider(Span::styled("|", Style::default().fg(Color::DarkGray)))
+            .padding("", "");
         frame.render_widget(tabs, chunks[0]);
 
         let terminal_area = chunks[1];
