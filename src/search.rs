@@ -6,7 +6,7 @@ pub(crate) fn fuzzy_indices(value: &str, query: &str) -> Option<Vec<usize>> {
         return None;
     }
 
-    let (_, indices) = SkimMatcherV2::default().fuzzy_indices(value, query)?;
+    let (_, indices) = SkimMatcherV2::default().ignore_case().fuzzy_indices(value, query)?;
     let first = *indices.first()?;
     let last = *indices.last()?;
     let unmatched_span = last
@@ -26,6 +26,13 @@ mod tests {
     fn accepts_compact_fuzzy_matches() {
         assert!(fuzzy_indices("prod-api", "prdapi").is_some());
         assert!(fuzzy_indices("Billing frontend", "bill").is_some());
+    }
+
+    #[test]
+    fn matches_case_insensitively() {
+        assert!(fuzzy_indices("prod-api", "PROD").is_some());
+        assert!(fuzzy_indices("Billing Frontend", "billing").is_some());
+        assert!(fuzzy_indices("staging-db", "STAGING").is_some());
     }
 
     #[test]
